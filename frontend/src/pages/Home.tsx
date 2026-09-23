@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Activity, ArrowDownRight, ArrowUpRight, Check, ChevronDown, CircleHelp, Cloud, Gauge, KeyRound, LockKeyhole, RefreshCw, ShieldCheck, Wifi, X } from "lucide-react";
+import { Activity, ArrowUpRight, Bell, Bot, Check, ChevronDown, CircleHelp, Cloud, FileText, Gauge, KeyRound, LockKeyhole, MessageSquare, RefreshCw, Send, ShieldCheck, Sparkles, Wifi } from "lucide-react";
 import { toast } from "sonner";
 
 import { Badge } from "@/components/ui/badge";
@@ -8,10 +8,11 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Toaster } from "@/components/ui/sonner";
-import { apiGet, apiPost } from "@/lib/api";
+import { Textarea } from "@/components/ui/textarea";
+import { apiGet, apiPost, apiStream } from "@/lib/api";
 
 type IndexSymbol = "NIFTY" | "BANKNIFTY" | "FINNIFTY";
-type MarketState = "LIVE" | "STALE" | "EXPIRED" | "MARKET_CLOSED" | "DEMO";
+type MarketState = "LIVE" | "STALE" | "EXPIRED" | "MARKET_CLOSED" | "DISCONNECTED" | "DEMO";
 
 interface SpotSnapshot {
   symbol: IndexSymbol;
@@ -78,7 +79,26 @@ interface AuthStatus {
   state: "DEMO" | "DISCONNECTED" | "LIVE" | "EXPIRED";
   configured: boolean;
   connected: boolean;
+  configured_fields: string[];
+  missing_fields: string[];
+  feed_connected: boolean;
   message: string;
+}
+
+type AiAction = "explain" | "chat" | "summary" | "alert";
+
+interface AiStatus {
+  configured: boolean;
+  provider: "anthropic";
+  model: string;
+  capabilities: AiAction[];
+}
+
+interface AiAnalysisRequest {
+  action: AiAction;
+  symbol: IndexSymbol;
+  session_id: string;
+  message?: string;
 }
 
 const SYMBOLS: IndexSymbol[] = ["NIFTY", "BANKNIFTY", "FINNIFTY"];
@@ -88,6 +108,7 @@ const integerFormat = new Intl.NumberFormat("en-IN", { maximumFractionDigits: 0 
 const fetchDashboard = (symbol: IndexSymbol) =>
   apiGet<DashboardSnapshot>(`/market-data/dashboard?symbol=${symbol}`);
 const fetchAuthStatus = () => apiGet<AuthStatus>("/auth/status");
+const fetchAiStatus = () => apiGet<AiStatus>("/ai/status");
 
 function formatPrice(value: number) {
   return numberFormat.format(value);
@@ -106,7 +127,14 @@ function stateStyles(state: MarketState) {
   if (state === "STALE") return "border-amber-500/35 bg-amber-950/70 text-amber-300";
   if (state === "EXPIRED") return "border-rose-500/35 bg-rose-950/70 text-rose-300";
   if (state === "MARKET_CLOSED") return "border-zinc-700/60 bg-zinc-900/90 text-zinc-300";
+  if (state === "DISCONNECTED") return "border-rose-500/35 bg-rose-950/70 text-rose-300";
   return "border-indigo-500/35 bg-indigo-950/70 text-indigo-300";
+}
+
+function modeStyles(mode: "DEMO" | "LIVE") {
+  return mode === "LIVE"
+    ? "border-emerald-500/30 bg-emerald-950/70 text-emerald-300"
+    : "border-indigo-500/30 bg-indigo-950/70 text-indigo-300";
 }
 
 function MetricCard({ label, value, detail, icon: Icon, accent = "text-slate-100", testId }: { label: string; value: string; detail: string; icon: typeof Activity; accent?: string; testId: string }) {
@@ -130,6 +158,10 @@ export default function Home() {
   const [range, setRange] = useState("5");
   const [connectOpen, setConnectOpen] = useState(false);
   const [demoOpen, setDemoOpen] = useState(false);
+  const [aiOutput, setAiOutput] = useState("");
+  const [aiAction, setAiAction] = useState<AiAction>("explain");
+  const [chatQuestion, setChatQuestion] = useState("");
+  const [aiSessionId] = useState(() => window.crypto.randomUUID());
 
   const dashboardQuery = useQuery({
     queryKey: ["dashboard", symbol],
@@ -138,6 +170,7 @@ export default function Home() {
     retry: false,
   });
   const authQuery = useQuery({ queryKey: ["auth-status"], queryFn: fetchAuthStatus, retry: false });
+  const aiStatusQuery = useQuery({ queryKey: ["ai-status"], queryFn: fetchAiStatus, retry: false });
 
   const demoMutation = useMutation({
     mutationFn: () => apiPost<AuthStatus>("/auth/demo", { confirm: true }),
@@ -159,8 +192,44 @@ export default function Home() {
     onError: () => toast.info("Credentials are not configured yet", { description: "Add them only to backend/.env, then retry this check." }),
   });
 
+  const aiMutation = useMutation({
+    mutationFn: async ({ action, message }: { action: AiAction; message?: string }) => {
+      let result = "";
+      setAiAction(action);
+      setAiOutput("");
+      const request: AiAnalysisRequest = { action, symbol, session_id: aiSessionId, message };
+      await apiStream("/ai/stream", request, (delta) => {
+        result += delta;
+        setAiOutput(result);
+      });
+      return { action, result };
+    },
+    onSuccess: ({ action, result }) => {
+      if (action === "chat") setChatQuestion("");
+      if (action === "alert") {
+        const headline = result.split("\n")[0] || `${symbol} AI alert`;
+        toast(headline, { description: "Read-only Claude analysis. Review the invalidation before acting." });
+        if ("Notification" in window && Notification.permission === "granted") {
+          new Notification(`${symbol} · ${headline}`, { body: result.slice(0, 180) });
+        }
+      }
+    },
+    onError: () => toast.error("Claude analysis is temporarily unavailable"),
+  });
+
+  const enableNotifications = async () => {
+    if (!("Notification" in window)) {
+      toast.info("Browser notifications are not supported here");
+      return;
+    }
+    const permission = await Notification.requestPermission();
+    if (permission === "granted") toast.success("CE/PE browser alerts enabled");
+    else toast.info("Notifications remain off");
+  };
+
   const data = dashboardQuery.data;
-  const feedState = (data?.feed.state ?? "DEMO") as MarketState;
+  const feedState = (data?.feed.state ?? (authQuery.data?.state === "LIVE" ? "STALE" : authQuery.data?.state ?? "DEMO")) as MarketState;
+  const modeLabel = authQuery.data?.mode ?? "DEMO";
   const visibleRows = useMemo(() => {
     if (!data) return [];
     return data.option_chain.filter((row) => Math.abs(row.strike - data.structure.max_pain) <= Number(range) * 50);
@@ -182,7 +251,7 @@ export default function Home() {
               </div>
             </div>
             <div className="flex items-center gap-2 xl:hidden">
-              <Badge data-testid="mobile-mode-pill" className="border-indigo-500/30 bg-indigo-950/70 text-[10px] text-indigo-300">DEMO</Badge>
+              <Badge data-testid="mobile-mode-pill" className={`${modeStyles(modeLabel)} text-[10px]`}>{modeLabel}</Badge>
               <Button data-testid="mobile-connect-kotak-button" variant="outline" size="sm" className="border-[#2a364f] bg-transparent text-slate-200" onClick={() => setConnectOpen(true)}>Connect</Button>
             </div>
           </div>
@@ -204,7 +273,7 @@ export default function Home() {
               {feedState === "EXPIRED" && <button data-testid="banner-relogin-action" type="button" className="text-[10px] font-bold underline" onClick={() => setConnectOpen(true)}>RE-LOGIN</button>}
             </div>
             <div className="hidden items-center gap-2 xl:flex">
-              <Badge data-testid="mode-pill" className="border-indigo-500/30 bg-indigo-950/70 text-[10px] text-indigo-300"><span className="mr-1.5 size-1.5 rounded-full bg-indigo-400" />DEMO</Badge>
+              <Badge data-testid="mode-pill" className={`${modeStyles(modeLabel)} text-[10px]`}><span className={`mr-1.5 size-1.5 rounded-full ${modeLabel === "LIVE" ? "bg-emerald-400" : "bg-indigo-400"}`} />{modeLabel}</Badge>
               <Button data-testid="connect-kotak-button" size="sm" className="bg-[#e31837] text-white shadow-[0_0_20px_rgba(227,24,55,0.16)] hover:bg-[#c8102e]" onClick={() => setConnectOpen(true)}><KeyRound className="mr-2 size-3.5" />Connect Kotak Neo</Button>
             </div>
           </div>
@@ -269,6 +338,30 @@ export default function Home() {
 
             <Card data-testid="signal-engine-card" className="signal-pulse border-emerald-500/20 bg-[#101621]/90"><CardHeader className="flex-row items-center justify-between border-b border-[#202b42] px-4 py-3"><div><CardTitle data-testid="signal-engine-title" className="font-heading text-base text-slate-100">Signal engine</CardTitle><p data-testid="signal-engine-subtitle" className="mt-1 text-xs text-slate-500">Normalized inputs · read-only guidance</p></div><Badge data-testid="signal-engine-status" className="border-emerald-500/30 bg-emerald-500/10 text-[10px] text-emerald-300">ACTIVE</Badge></CardHeader><CardContent className="space-y-4 p-4"><div className="flex items-end justify-between"><div><p data-testid="signal-recommendation-label" className="text-[10px] uppercase tracking-[0.16em] text-slate-500">Recommendation</p><p data-testid="signal-recommendation-badge" className="mt-1 font-heading text-xl font-bold text-emerald-300">{data?.signal.recommendation ?? "—"}</p></div><div className="text-right"><p data-testid="signal-confidence-label" className="text-[10px] uppercase tracking-wider text-slate-500">Confidence</p><p data-testid="signal-confidence-value" className="mt-1 font-mono text-lg font-bold text-white">{data ? `${data.signal.confidence}%` : "—"}</p></div></div><div data-testid="signal-confidence-meter" className="h-1.5 overflow-hidden rounded-full bg-[#202b42]"><div className="h-full rounded-full bg-emerald-400 transition-[width] duration-500" style={{ width: `${data?.signal.confidence ?? 0}%` }} /></div><ul data-testid="signal-breakdown-reasons" className="space-y-2">{(data?.signal.reasons ?? ["Waiting for normalized market inputs"]).map((reason, index) => <li key={reason} data-testid={`signal-reason-${index}`} className="flex items-start gap-2 text-xs text-slate-400"><Check className="mt-0.5 size-3.5 shrink-0 text-emerald-400" />{reason}</li>)}</ul><p data-testid="signal-timestamp" className="border-t border-[#202b42] pt-3 font-mono text-[10px] text-slate-600">Updated {data ? new Date(data.signal.timestamp).toLocaleTimeString("en-IN") : "—"} · informational only</p></CardContent></Card>
 
+            <Card data-testid="claude-analyst-card" className="overflow-hidden border-[#315080]/60 bg-[#101621]/95 shadow-[0_16px_40px_rgba(28,74,135,0.12)]">
+              <CardHeader className="flex-row items-center justify-between border-b border-[#202b42] px-4 py-3">
+                <div className="flex items-center gap-2.5"><div data-testid="claude-analyst-icon" className="flex size-8 items-center justify-center rounded-md bg-blue-500/10 text-blue-300"><Bot className="size-4" /></div><div><CardTitle data-testid="claude-analyst-title" className="font-heading text-base text-slate-100">Claude AI analyst</CardTitle><p data-testid="claude-analyst-model" className="mt-0.5 text-[10px] text-slate-500">Haiku 4.5 · streaming · read-only</p></div></div>
+                <Badge data-testid="claude-analyst-status" className={aiStatusQuery.data?.configured ? "border-blue-500/30 bg-blue-500/10 text-[10px] text-blue-300" : "border-amber-500/30 bg-amber-500/10 text-[10px] text-amber-300"}>{!aiStatusQuery.data?.configured ? "OFFLINE" : aiMutation.isPending ? "STREAMING" : "READY"}</Badge>
+              </CardHeader>
+              <CardContent className="space-y-3 p-4">
+                <div data-testid="claude-action-grid" className="grid grid-cols-2 gap-2">
+                  <Button data-testid="claude-explain-button" type="button" variant="outline" size="sm" className="justify-start border-[#2a364f] bg-[#0e131d] text-slate-300" onClick={() => aiMutation.mutate({ action: "explain" })} disabled={aiMutation.isPending}><Sparkles className="mr-2 size-3.5 text-blue-300" />Explain signal</Button>
+                  <Button data-testid="claude-summary-button" type="button" variant="outline" size="sm" className="justify-start border-[#2a364f] bg-[#0e131d] text-slate-300" onClick={() => aiMutation.mutate({ action: "summary" })} disabled={aiMutation.isPending}><FileText className="mr-2 size-3.5 text-blue-300" />Daily summary</Button>
+                  <Button data-testid="claude-alert-button" type="button" variant="outline" size="sm" className="justify-start border-amber-500/25 bg-amber-500/5 text-amber-200" onClick={() => aiMutation.mutate({ action: "alert" })} disabled={aiMutation.isPending}><Bell className="mr-2 size-3.5" />CE / PE alert</Button>
+                  <Button data-testid="claude-notifications-button" type="button" variant="outline" size="sm" className="justify-start border-[#2a364f] bg-[#0e131d] text-slate-400" onClick={enableNotifications}><Bell className="mr-2 size-3.5" />Enable notify</Button>
+                </div>
+                <div data-testid="claude-output-panel" className="min-h-28 rounded-lg border border-[#202b42] bg-[#090d15] p-3">
+                  <div className="flex items-center justify-between gap-2"><p data-testid="claude-output-label" className="text-[10px] font-semibold uppercase tracking-[0.16em] text-blue-300/80">{aiAction === "alert" ? "Options alert" : aiAction === "summary" ? "Daily summary" : aiAction === "chat" ? "Chat response" : "Signal explanation"}</p>{modeLabel === "DEMO" && <Badge data-testid="claude-demo-badge" className="border-indigo-500/25 bg-indigo-500/10 text-[9px] text-indigo-300">DEMO INPUT</Badge>}</div>
+                  <p data-testid="claude-output-text" className="mt-2 whitespace-pre-wrap text-xs leading-relaxed text-slate-300">{aiMutation.isPending && !aiOutput ? "Claude is reading the normalized option chain…" : aiOutput || "Choose an analysis action or ask a question about the current chain."}</p>
+                </div>
+                <form data-testid="claude-chat-form" className="space-y-2" onSubmit={(event) => { event.preventDefault(); const question = chatQuestion.trim(); if (question) aiMutation.mutate({ action: "chat", message: question }); }}>
+                  <label data-testid="claude-chat-label" htmlFor="claude-chat-input" className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500"><MessageSquare className="size-3" />Ask about this chain</label>
+                  <div className="flex gap-2"><Textarea id="claude-chat-input" data-testid="claude-chat-input" value={chatQuestion} onChange={(event) => setChatQuestion(event.target.value)} maxLength={1000} rows={2} placeholder="Why does the current OI favor CE, PE, or waiting?" className="min-h-16 resize-none border-[#2a364f] bg-[#0e131d] text-xs text-slate-200 placeholder:text-slate-600" /><Button data-testid="claude-chat-submit-button" type="submit" size="icon" className="h-16 w-11 shrink-0 bg-blue-600 text-white hover:bg-blue-500" disabled={aiMutation.isPending || !chatQuestion.trim()}><Send className="size-4" /></Button></div>
+                </form>
+                <p data-testid="claude-disclaimer" className="text-[10px] leading-relaxed text-slate-600">AI output is informational, may be wrong, and never places orders. Verify CE/PE alerts against live price, liquidity, and risk.</p>
+              </CardContent>
+            </Card>
+
             <Card data-testid="kotak-vault-card" className="border-[#202b42] bg-[#0e131d]/90"><CardContent className="p-4"><div className="flex items-start gap-3"><div className="flex size-8 shrink-0 items-center justify-center rounded-md bg-[#e31837]/10 text-[#f04a63]"><LockKeyhole className="size-4" /></div><div className="min-w-0"><p data-testid="kotak-vault-title" className="text-sm font-semibold text-slate-200">Kotak Neo vault boundary</p><p data-testid="kotak-vault-message" className="mt-1 text-xs leading-relaxed text-slate-500">{authMessage}</p></div></div><Button data-testid="vault-connect-action" variant="outline" size="sm" className="mt-4 w-full border-[#2a364f] bg-transparent text-slate-300 hover:bg-[#171e2e]" onClick={() => setConnectOpen(true)}><KeyRound className="mr-2 size-3.5" />Review connection setup</Button></CardContent></Card>
           </div>
         </section>
@@ -276,7 +369,7 @@ export default function Home() {
         <footer data-testid="app-footer" className="flex flex-col gap-2 border-t border-[#1e2638] pt-4 text-[10px] text-slate-600 sm:flex-row sm:items-center sm:justify-between"><span data-testid="compliance-disclaimer">Read-only market analytics. Not investment advice. No orders are placed by this dashboard.</span><button data-testid="demo-mode-toggle" type="button" className="flex items-center gap-1 text-indigo-400 transition-colors hover:text-indigo-300" onClick={() => setDemoOpen(true)}><RefreshCw className="size-3" />Keep DEMO mode enabled</button></footer>
       </main>
 
-      <Dialog open={connectOpen} onOpenChange={setConnectOpen}><DialogContent data-testid="kotak-modal-dialog" className="border-[#2a364f] bg-[#111622] text-slate-100 sm:max-w-lg"><DialogHeader><DialogTitle data-testid="kotak-modal-title" className="font-heading text-xl">Connect Kotak Neo</DialogTitle><DialogDescription data-testid="kotak-modal-description" className="text-slate-400">Credentials stay on the FastAPI server. This browser never receives your consumer secret, MPIN, TOTP secret, or session token.</DialogDescription></DialogHeader><div className="space-y-4"><div data-testid="kotak-consumer-key-status" className="flex items-center justify-between rounded-lg border border-amber-500/20 bg-amber-500/5 px-3 py-3"><div className="flex items-center gap-2"><Cloud className="size-4 text-amber-300" /><div><p data-testid="kotak-status-label" className="text-xs font-semibold text-slate-200">Server configuration</p><p data-testid="kotak-status-value" className="text-[11px] text-slate-500">{authQuery.data?.configured ? "Credentials detected" : "Awaiting backend/.env credentials"}</p></div></div><span data-testid="kotak-status-indicator" className={`size-2 rounded-full ${authQuery.data?.configured ? "bg-emerald-400" : "bg-amber-400"}`} /></div><details data-testid="kotak-credential-guide-accordion" className="group rounded-lg border border-[#202b42] bg-[#0e131d] p-3"><summary data-testid="kotak-credential-guide-summary" className="flex cursor-pointer list-none items-center justify-between text-xs font-semibold text-slate-300">Server-only setup guide<ChevronDown className="size-4 transition-transform group-open:rotate-180" /></summary><div className="mt-3 space-y-2 text-xs leading-relaxed text-slate-500"><p data-testid="kotak-credential-guide-copy">In the backend environment file, add the Kotak Neo values supplied by your Trade API app: consumer key, consumer secret, registered mobile, MPIN, and TOTP secret. Never paste them into this chat or a Vite variable.</p><code data-testid="kotak-env-copy-snippet" className="block rounded-md border border-[#202b42] bg-[#07090e] p-3 font-mono text-[10px] leading-5 text-slate-400">KOTAK_MODE=LIVE<br />KOTAK_CONSUMER_KEY=…<br />KOTAK_CONSUMER_SECRET=…<br />KOTAK_MOBILE=…<br />KOTAK_MPIN=…<br />KOTAK_TOTP_SECRET=…</code></div></details></div><DialogFooter><Button data-testid="kotak-totp-login-btn" type="button" className="bg-[#e31837] text-white hover:bg-[#c8102e]" onClick={() => connectMutation.mutate()} disabled={connectMutation.isPending}>{connectMutation.isPending ? "Checking…" : "Check server configuration"}</Button></DialogFooter></DialogContent></Dialog>
+      <Dialog open={connectOpen} onOpenChange={setConnectOpen}><DialogContent data-testid="kotak-modal-dialog" className="border-[#2a364f] bg-[#111622] text-slate-100 sm:max-w-lg"><DialogHeader><DialogTitle data-testid="kotak-modal-title" className="font-heading text-xl">Connect Kotak Neo</DialogTitle><DialogDescription data-testid="kotak-modal-description" className="text-slate-400">The current v2 login runs entirely in FastAPI. This browser never receives your Access Token, MPIN, TOTP secret, session token, sid, baseUrl, or feedUrl.</DialogDescription></DialogHeader><div className="space-y-4"><div data-testid="kotak-consumer-key-status" className="flex items-center justify-between rounded-lg border border-amber-500/20 bg-amber-500/5 px-3 py-3"><div className="flex items-center gap-2"><Cloud className="size-4 text-amber-300" /><div><p data-testid="kotak-status-label" className="text-xs font-semibold text-slate-200">Server configuration</p><p data-testid="kotak-status-value" className="text-[11px] text-slate-500">{authQuery.data?.configured ? "Current v2 values detected" : "Awaiting backend/.env values"}</p></div></div><span data-testid="kotak-status-indicator" className={`size-2 rounded-full ${authQuery.data?.configured ? "bg-emerald-400" : "bg-amber-400"}`} /></div><details data-testid="kotak-credential-guide-accordion" className="group rounded-lg border border-[#202b42] bg-[#0e131d] p-3"><summary data-testid="kotak-credential-guide-summary" className="flex cursor-pointer list-none items-center justify-between text-xs font-semibold text-slate-300">Current v2 server-only setup<ChevronDown className="size-4 transition-transform group-open:rotate-180" /></summary><div className="mt-3 space-y-2 text-xs leading-relaxed text-slate-500"><p data-testid="kotak-credential-guide-copy">Add the current Kotak API Access Token, registered mobile, UCC, MPIN, TOTP secret, and a local application vault key to the backend environment. No broker credential is entered in this browser.</p><code data-testid="kotak-env-copy-snippet" className="block rounded-md border border-[#202b42] bg-[#07090e] p-3 font-mono text-[10px] leading-5 text-slate-400">KOTAK_MODE=LIVE<br />KOTAK_ACCESS_TOKEN=…<br />KOTAK_TOTP_SECRET=…<br />KOTAK_MPIN=…<br />KOTAK_MOBILE_NUMBER=…<br />KOTAK_UCC=…<br />KOTAK_VAULT_KEY=…</code></div></details></div><DialogFooter><Button data-testid="kotak-totp-login-btn" type="button" className="bg-[#e31837] text-white hover:bg-[#c8102e]" onClick={() => connectMutation.mutate()} disabled={connectMutation.isPending}>{connectMutation.isPending ? "Running server login…" : "Run server-side Kotak login"}</Button></DialogFooter></DialogContent></Dialog>
 
       <Dialog open={demoOpen} onOpenChange={setDemoOpen}><DialogContent data-testid="demo-confirm-dialog" className="border-indigo-500/30 bg-[#111622] text-slate-100 sm:max-w-md"><DialogHeader><DialogTitle data-testid="demo-confirm-title" className="font-heading text-xl">Stay in DEMO mode?</DialogTitle><DialogDescription data-testid="demo-confirm-description" className="text-slate-400">This dashboard will keep showing simulated normalized data until Kotak Neo credentials are configured server-side. It will never label simulated data as LIVE.</DialogDescription></DialogHeader><div data-testid="demo-confirm-warning" className="rounded-lg border border-indigo-500/20 bg-indigo-500/5 px-3 py-3 text-xs leading-relaxed text-indigo-200">DEMO is an explicit fallback for preview and indicator testing only. No orders can be placed from this app.</div><DialogFooter><Button data-testid="demo-confirm-cancel-btn" variant="outline" className="border-[#2a364f] bg-transparent text-slate-300" onClick={() => setDemoOpen(false)}>Cancel</Button><Button data-testid="demo-confirm-accept-btn" className="bg-indigo-600 text-white hover:bg-indigo-500" onClick={() => demoMutation.mutate()} disabled={demoMutation.isPending}>{demoMutation.isPending ? "Confirming…" : "Confirm DEMO mode"}</Button></DialogFooter></DialogContent></Dialog>
     </div>

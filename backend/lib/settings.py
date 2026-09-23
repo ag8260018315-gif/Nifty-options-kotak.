@@ -6,11 +6,14 @@ from pydantic import BaseModel
 
 class NeoSettings(BaseModel):
     mode: Literal["DEMO", "LIVE"] = "DEMO"
-    consumer_key: str = ""
-    consumer_secret: str = ""
-    mobile: str = ""
+    access_token: str = ""
+    mobile_number: str = ""
+    ucc: str = ""
     mpin: str = ""
     totp_secret: str = ""
+    neo_fin_key: str = "neotradeapi"
+    vault_key: str = ""
+    option_chain_path: str = "/market-data/1.0/watchlist/option-chain"
 
     @classmethod
     def from_env(cls) -> "NeoSettings":
@@ -18,22 +21,26 @@ class NeoSettings(BaseModel):
         mode = raw_mode if raw_mode in {"DEMO", "LIVE"} else "DEMO"
         return cls(
             mode=mode,
-            consumer_key=os.environ.get("KOTAK_CONSUMER_KEY", ""),
-            consumer_secret=os.environ.get("KOTAK_CONSUMER_SECRET", ""),
-            mobile=os.environ.get("KOTAK_MOBILE", ""),
+            access_token=os.environ.get("KOTAK_ACCESS_TOKEN", ""),
+            mobile_number=os.environ.get("KOTAK_MOBILE_NUMBER", ""),
+            ucc=os.environ.get("KOTAK_UCC", ""),
             mpin=os.environ.get("KOTAK_MPIN", ""),
             totp_secret=os.environ.get("KOTAK_TOTP_SECRET", ""),
+            neo_fin_key=os.environ.get("KOTAK_NEO_FIN_KEY", "neotradeapi"),
+            vault_key=os.environ.get("KOTAK_VAULT_KEY", ""),
+            option_chain_path=os.environ.get("KOTAK_OPTION_CHAIN_PATH", "/market-data/1.0/watchlist/option-chain"),
         )
 
     @property
     def live_configured(self) -> bool:
         return all(
             [
-                self.consumer_key,
-                self.consumer_secret,
-                self.mobile,
+                self.access_token,
+                self.mobile_number,
+                self.ucc,
                 self.mpin,
                 self.totp_secret,
+                self.vault_key,
             ]
         )
 

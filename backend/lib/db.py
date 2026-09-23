@@ -20,6 +20,9 @@ logger = logging.getLogger(__name__)
 INDEXES: dict[str, list[IndexModel]] = {
     "kotak_sessions": [IndexModel([("updated_at", DESCENDING)], name="updated_at_desc")],
     "market_snapshots": [IndexModel([("symbol", ASCENDING), ("as_of", DESCENDING)], name="symbol_as_of")],
+    "ai_messages": [IndexModel([("session_id", ASCENDING), ("created_at", DESCENDING)], name="session_created")],
+    "ai_summaries": [IndexModel([("symbol", ASCENDING), ("created_at", DESCENDING)], name="symbol_created")],
+    "ai_alerts": [IndexModel([("symbol", ASCENDING), ("created_at", DESCENDING)], name="symbol_created")],
 }
 
 

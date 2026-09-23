@@ -1,0 +1,67 @@
+{
+  "iteration": 1,
+  "passed": 8,
+  "failed": 0,
+  "bugs": [],
+  "action_items": [],
+  "retest_needed": false,
+  "checks": [
+    {
+      "criterion": "Claude Haiku 4.5 integration is available server-side",
+      "name": "test_tscheck_ai_status.py::test_ai_status_reports_claude_haiku_configuration",
+      "lane": "backend",
+      "status": "passed",
+      "evidence": "GET /api/ai/status -> 200 {configured:true, provider:anthropic, model:claude-haiku-4-5-20251001, capabilities:[explain,chat,summary,alert]}; no api_key/secret/emergent_llm_key markers in body"
+    },
+    {
+      "criterion": "AI persistence and validation contracts are safe",
+      "name": "test_tscheck_ai_stream_validation.py (4 tests)",
+      "lane": "backend",
+      "status": "passed",
+      "evidence": "POST /api/ai/stream invalid action -> 422; invalid symbol -> 422; short session_id -> 422; valid explain request -> 200 text/event-stream SSE body containing 'data:' frames, no credential markers"
+    },
+    {
+      "criterion": "Signal and market-structure explanation streams in the dashboard",
+      "name": "ai-explain-signal-streams",
+      "lane": "browser",
+      "status": "passed",
+      "evidence": "Clicked Explain signal; status badge READY->STREAMING->READY; claude-output-text began with 'DEMO ANALYSIS'; DEMO INPUT badge visible"
+    },
+    {
+      "criterion": "Interactive market-analysis chat works",
+      "name": "ai-chat-interactive-question",
+      "lane": "browser",
+      "status": "passed",
+      "evidence": "Submitted chat question via claude-chat-input/submit; status went STREAMING->READY; non-empty streamed response rendered; input cleared after success"
+    },
+    {
+      "criterion": "End-of-day summary works",
+      "name": "ai-daily-summary-streams",
+      "lane": "browser",
+      "status": "passed",
+      "evidence": "Clicked Daily summary; output-label showed 'Daily summary'; final text contained structure/signal/risk context; status returned to READY"
+    },
+    {
+      "criterion": "CE/PE AI alert works",
+      "name": "ai-ce-pe-alert-toast",
+      "lane": "browser",
+      "status": "passed",
+      "evidence": "Clicked CE / PE alert; response text matched CE WATCH/PE WATCH/WAIT; sonner toast rendered; disclaimer confirms 'never places orders' (read-only)"
+    },
+    {
+      "criterion": "DEMO and live-source safety remains explicit",
+      "name": "demo-mode-safety-labels",
+      "lane": "browser",
+      "status": "passed",
+      "evidence": "mode-pill and banner-status-label both read DEMO; option-chain-footnote says 'simulated snapshot'; AI output began with 'DEMO ANALYSIS' and DEMO INPUT badge shown; no 'live kotak'/'live data' claim in output"
+    },
+    {
+      "criterion": "Existing options dashboard remains functional",
+      "name": "dashboard-options-functional",
+      "lane": "browser",
+      "status": "passed",
+      "evidence": "Switched NIFTY->BANKNIFTY->FINNIFTY with data updating per symbol; PCR/max pain/signal populated; option chain rows rendered; Kotak connect modal opened/closed; demo confirmation dialog accepted"
+    }
+  ],
+  "notes": "Ran against public ingress https://kotak-neo-options.preview.emergentagent.com for all browser checks (APP_URL from backend/.env). Backend suite (5 tests across 2 files) executed via pytest at :8001, all passing. Exactly 8 acceptance criteria; each got one artifact (2 backend-heavy criteria as pytest files, 6 UI-facing criteria as browser checks) — no exploratory extras added."
+}

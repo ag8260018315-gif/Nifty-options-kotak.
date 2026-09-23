@@ -44,3 +44,44 @@ export const apiPut = <T>(path: string, body?: JsonBody) => request<T>("PUT", pa
 export const apiPatch = <T>(path: string, body?: JsonBody) =>
   request<T>("PATCH", path, body ?? null);
 export const apiDelete = <T>(path: string) => request<T>("DELETE", path);
+
+interface StreamEvent {
+  delta?: string;
+  done?: boolean;
+  error?: string;
+}
+
+export async function apiStream(
+  path: string,
+  body: JsonBody,
+  onDelta: (delta: string) => void,
+): Promise<void> {
+  const res = await fetch(`${BASE}${path}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const errBody = await res.json().catch(() => null);
+    throw new ApiError(res.status, errBody);
+  }
+  if (!res.body) throw new Error("streaming response body is unavailable");
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  while (true) {
+    const { done, value } = await reader.read();
+    buffer += decoder.decode(value, { stream: !done });
+    const events = buffer.split("\n\n");
+    buffer = events.pop() ?? "";
+    for (const event of events) {
+      const dataLine = event.split("\n").find((line) => line.startsWith("data: "));
+      if (!dataLine) continue;
+      const payload = JSON.parse(dataLine.slice(6)) as StreamEvent;
+      if (payload.error) throw new Error(payload.error);
+      if (payload.delta) onDelta(payload.delta);
+    }
+    if (done) break;
+  }
+}

@@ -6,7 +6,6 @@ from starlette.middleware.cors import CORSMiddleware
 import os
 import logging
 from pathlib import Path
-from routers import auth, dashboard
 
 
 ROOT_DIR = Path(__file__).parent
@@ -14,6 +13,8 @@ load_dotenv(ROOT_DIR / '.env')
 
 # MongoDB connection
 from lib.db import client, db, ensure_indexes
+from lib.settings import settings
+from routers import ai, auth, dashboard
 
 
 # Startup runs before the yield, shutdown after it. Add your own setup/teardown here.
@@ -34,11 +35,12 @@ api_router = APIRouter(prefix="/api")
 # Add your routes to the router instead of directly to app
 @api_router.get("/")
 async def root():
-    return {"message": "Kotak Neo dashboard API", "mode": "DEMO"}
+    return {"message": "Kotak Neo dashboard API", "mode": settings.mode, "integration": "kotak-neo-v2"}
 
 
 api_router.include_router(auth.router)
 api_router.include_router(dashboard.router)
+api_router.include_router(ai.router)
 
 # Include the router in the main app
 app.include_router(api_router)

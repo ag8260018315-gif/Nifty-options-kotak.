@@ -12,6 +12,9 @@ class AuthStatus(BaseModel):
     state: AuthState
     configured: bool
     connected: bool
+    configured_fields: list[str]
+    missing_fields: list[str]
+    feed_connected: bool
     message: str
 
 
@@ -20,5 +23,4 @@ class DemoModeRequest(BaseModel):
 
 
 class KotakConnectRequest(BaseModel):
-    totp: str | None = None
-    mpin: str | None = None
+    """The browser sends no credentials; the server generates TOTP and reads MPIN."""
