@@ -1,0 +1,236 @@
+{
+  "project_name": "NIFTY Options Dashboard — Kotak Neo Live Data Migration",
+  "theme": "dark",
+  "archetype": "THE PERFORMANCE PRO & INSTITUTIONAL TRADING DESK",
+  "design_philosophy": {
+    "mood": "Bloomberg / Order Flow Terminal precision meets modern Swiss neo-fintech",
+    "tone": "Mission-critical, crisp, low-latency, disciplined execution. Zero fluff.",
+    "core_imperative": "Absolute data integrity: Clear distinction between LIVE and DEMO mode with prominent status banner (LIVE, STALE, EXPIRED, MARKET CLOSED). No accidental executions or silent fallback to demo."
+  },
+  "typography": {
+    "font_family_heading": "IBM Plex Sans, Outfit, Geist, -apple-system, sans-serif",
+    "font_family_body": "Geist, IBM Plex Sans, -apple-system, sans-serif",
+    "font_family_numbers_mono": "IBM Plex Mono, Geist Mono, JetBrains Mono, monospace",
+    "scale": {
+      "h1_title": "text-2xl sm:text-3xl font-bold tracking-tight text-white",
+      "h2_section": "text-lg sm:text-xl font-semibold tracking-tight text-zinc-100",
+      "h3_card": "text-sm sm:text-base font-medium tracking-tight text-zinc-200",
+      "data_callout_primary": "text-xl sm:text-2xl font-mono font-bold tracking-tight",
+      "data_callout_secondary": "text-sm sm:text-base font-mono font-semibold",
+      "table_data": "text-xs font-mono tabular-nums leading-tight",
+      "labels": "text-[11px] uppercase tracking-wider font-semibold text-zinc-400"
+    },
+    "rules": [
+      "Never use Inter or generic sans for headers",
+      "Always use monospace tabular-nums for LTP, strike, OI, IV, Delta, PCR, and time ticks",
+      "Overline labels must be uppercase with tracking-[0.15em] or tracking-wider"
+    ]
+  },
+  "colors": {
+    "background": {
+      "app_canvas": "#07090E",
+      "terminal_surface": "#0C0F17",
+      "card_surface": "#111622",
+      "card_surface_elevated": "#171E2E",
+      "table_row_alt": "#0E131D",
+      "atm_strike_highlight": "#1E293B",
+      "atm_strike_border": "#3B82F6"
+    },
+    "borders": {
+      "subtle": "#1E2638",
+      "default": "#2A364F",
+      "active": "#3B82F6",
+      "glow_green": "rgba(34, 197, 94, 0.35)",
+      "glow_red": "rgba(239, 68, 68, 0.35)",
+      "glow_amber": "rgba(245, 158, 11, 0.35)"
+    },
+    "accents": {
+      "bullish_green": "#10B981",
+      "bullish_green_bg": "rgba(16, 185, 129, 0.12)",
+      "bullish_green_text": "#34D399",
+      "bearish_red": "#EF4444",
+      "bearish_red_bg": "rgba(239, 68, 68, 0.12)",
+      "bearish_red_text": "#F87171",
+      "kotak_red_brand": "#E31837",
+      "kotak_red_brand_hover": "#C8102E",
+      "brand_blue": "#2563EB",
+      "brand_blue_hover": "#1D4ED8",
+      "warning_amber": "#F59E0B",
+      "stale_amber": "#D97706",
+      "neutral_zinc": "#71717A",
+      "text_muted": "#94A3B8"
+    },
+    "banner_states": {
+      "LIVE": {
+        "bg": "bg-emerald-950/80 border-emerald-500/40 text-emerald-300",
+        "dot": "bg-emerald-400 animate-pulse",
+        "description": "Kotak Neo SFeed connected (<5s tick heartbeat)"
+      },
+      "STALE": {
+        "bg": "bg-amber-950/80 border-amber-500/40 text-amber-300",
+        "dot": "bg-amber-400 animate-ping",
+        "description": "No market tick for >5 seconds during live hours"
+      },
+      "EXPIRED": {
+        "bg": "bg-rose-950/80 border-rose-500/40 text-rose-300",
+        "dot": "bg-rose-500",
+        "description": "Kotak Neo session token expired — one click re-login required"
+      },
+      "MARKET_CLOSED": {
+        "bg": "bg-zinc-900/90 border-zinc-700/50 text-zinc-300",
+        "dot": "bg-zinc-500",
+        "description": "NSE Market Closed (9:15 AM - 3:30 PM IST active window)"
+      },
+      "DEMO": {
+        "bg": "bg-indigo-950/70 border-indigo-500/30 text-indigo-300",
+        "dot": "bg-indigo-400",
+        "description": "Explicit Simulated Fallback Mode"
+      }
+    }
+  },
+  "layout_and_grids": {
+    "mode": "MODE B: High Density Terminal Bento Grid",
+    "structure": {
+      "top_bar": "Sticky header with Brand logo, Index Selector (NIFTY / BANKNIFTY / FINNIFTY), Live Market Status Banner, Mode Pill (LIVE vs DEMO), and 'Connect Kotak Neo' CTA button",
+      "market_summary_row": "Dense grid of 4 metric cards: Spot Price & Day Range, PCR & Max Pain, Market Structure Bias (Bullish/Bearish/Neutral score), and Kotak SFeed Socket Health",
+      "main_split": "2-column layout on desktop: Left/Center (7 cols) Option Chain & Greeks Ladder (OI, IV, Delta, LTP), Right (5 cols) Indicators & Signal Engine + Kotak Vault Connection Drawer"
+    },
+    "spacing": "Dense financial layout (gap-3, p-3 to p-4) with clear 1px borders and nested rounded-lg cards to maximize screen real estate and data visibility without clutter"
+  },
+  "components": {
+    "header": {
+      "path": "/app/frontend/src/components/Header.jsx",
+      "test_ids": [
+        "app-header",
+        "index-selector-nifty",
+        "index-selector-banknifty",
+        "index-selector-finnifty",
+        "market-status-banner",
+        "connect-kotak-button",
+        "demo-mode-toggle"
+      ]
+    },
+    "status_banner": {
+      "path": "/app/frontend/src/components/StatusBanner.jsx",
+      "test_ids": [
+        "banner-status-indicator",
+        "banner-last-tick-time",
+        "banner-relogin-action",
+        "banner-switch-mode-action"
+      ]
+    },
+    "index_ticker": {
+      "path": "/app/frontend/src/components/IndexTickerCard.jsx",
+      "test_ids": [
+        "ticker-spot-price",
+        "ticker-day-change",
+        "ticker-day-range-high-low",
+        "ticker-atm-strike-badge"
+      ]
+    },
+    "option_chain_table": {
+      "path": "/app/frontend/src/components/OptionChainTable.jsx",
+      "test_ids": [
+        "option-chain-container",
+        "strike-filter-range",
+        "expiry-date-select",
+        "option-chain-row-atm",
+        "call-oi-bar",
+        "put-oi-bar",
+        "call-ltp-cell",
+        "put-ltp-cell"
+      ],
+      "columns": [
+        "CALL: OI Chg",
+        "CALL: OI",
+        "CALL: IV",
+        "CALL: Delta",
+        "CALL: LTP",
+        "STRIKE",
+        "PUT: LTP",
+        "PUT: Delta",
+        "PUT: IV",
+        "PUT: OI",
+        "PUT: OI Chg"
+      ]
+    },
+    "market_structure_indicator": {
+      "path": "/app/frontend/src/components/MarketStructureCard.jsx",
+      "test_ids": [
+        "pcr-gauge-value",
+        "max-pain-value",
+        "pcr-interpretation-badge",
+        "oi-buildup-summary"
+      ]
+    },
+    "signal_engine": {
+      "path": "/app/frontend/src/components/SignalEngineCard.jsx",
+      "test_ids": [
+        "signal-recommendation-badge",
+        "signal-confidence-meter",
+        "signal-breakdown-reasons",
+        "signal-timestamp"
+      ]
+    },
+    "kotak_connection_modal": {
+      "path": "/app/frontend/src/components/KotakConnectionModal.jsx",
+      "test_ids": [
+        "kotak-modal-dialog",
+        "kotak-consumer-key-status",
+        "kotak-totp-login-btn",
+        "kotak-mpin-submit-btn",
+        "kotak-credential-guide-accordion",
+        "kotak-env-copy-snippet"
+      ]
+    },
+    "demo_confirmation_dialog": {
+      "path": "/app/frontend/src/components/DemoConfirmationDialog.jsx",
+      "test_ids": [
+        "demo-confirm-dialog",
+        "demo-confirm-accept-btn",
+        "demo-confirm-cancel-btn"
+      ]
+    }
+  },
+  "kotak_neo_v6_backend_spec": {
+    "auth_endpoints": {
+      "totp_login": "POST /login/v6/totp/login with UCC, mobile, TOTP",
+      "mpin_validate": "POST /login/v6/totp/validate with MPIN (returns sid, token, baseUrl)",
+      "auth_status": "GET /api/auth/status checking MongoDB vault and token TTL"
+    },
+    "market_feed_sfeed": {
+      "socket_url": "wss://<baseUrl>/feed",
+      "handshake": "JSON frame { user_id, auth_token, source: 'NEOTRADEAPI' }",
+      "divider_message_code": "1117 (NSE: 100 default if missing)",
+      "subscription_cap": "ATM ± 10 strikes (within 3000 instrument ceiling)",
+      "stale_heartbeat_window_seconds": 5
+    },
+    "normalization_schema": {
+      "spot": "{ symbol: 'NIFTY' | 'BANKNIFTY' | 'FINNIFTY', ltp: number, change: number, pct_change: number, high: number, low: number, timestamp: string }",
+      "option_chain": "[{ strike: number, call: { ltp, change, oi, oi_change, iv, delta }, put: { ltp, change, oi, oi_change, iv, delta }, is_atm: boolean }]"
+    }
+  },
+  "image_urls": [
+    {
+      "category": "trading_terminal_backdrop",
+      "url": "https://images.unsplash.com/photo-1611974789855-9c2a0a7236a3?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NTYxODF8MHwxfHNlYXJjaHwxfHxzdG9jayUyMG1hcmtldCUyMHRyYWRpbmclMjB0ZXJtaW5hbCUyMGRhcmslMjBzY3JlZW58ZW58MHx8fHwxNzkwMTg2ODkxfDA&ixlib=rb-4.1.0&q=85",
+      "description": "Stock market candlestick charts on deep dark monitor backdrop (subtle low-opacity texture in modal / header)"
+    },
+    {
+      "category": "kotak_neo_brand_reference",
+      "url": "https://images.unsplash.com/photo-1651341050677-24dba59ce0fd?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NTYxODF8MHwxfHNlYXJjaHwyfHxzdG9jayUyMG1hcmtldCUyMHRyYWRpbmclMjB0ZXJtaW5hbCUyMGRhcmslMjBzY3JlZW58ZW58MHx8fHwxNzkwMTg2ODkxfDA&ixlib=rb-4.1.0&q=85",
+      "description": "Financial analytics graphical interface reference for data density"
+    }
+  ],
+  "accessibility_and_contrast": {
+    "minimum_contrast_ratio": "4.5:1 for normal text, 3:1 for large monospace numbers",
+    "table_readability": "Alternating subtle rows, green/red badges with dark background tints rather than pure text alone for colorblind accessibility",
+    "tooltip_support": "Explainers for Greeks (Delta, IV, PCR, Max Pain) on hover/focus"
+  },
+  "UNIVERSAL GUIDELINES FOR MAIN AGENT": {
+    "file_extension_rule": "Use .js and .jsx files for new components if pure JS is preferred, or standard .tsx matching existing setup. Provide clear, runnable imports.",
+    "testing_rule": "Every button, input, toggle, select option, banner, and key numeric display MUST have a clear data-testid attribute in kebab-case format.",
+    "no_upstox_references": "Strictly scrub any legacy Upstox references from UI, tooltips, variable names, and documentation. All user-facing references must be Kotak Neo or generic NSE market data.",
+    "demo_mode_clarity": "DEMO mode must be distinctly colored and explicitly confirmed so traders know when data is simulated versus real live Kotak feed."
+  }
+}
