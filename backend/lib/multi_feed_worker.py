@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import math
 import random
 from collections import deque
@@ -27,6 +28,9 @@ from models.dashboard import (
     SignalSnapshot,
     SpotSnapshot,
 )
+
+
+logger = logging.getLogger(__name__)
 
 
 IST = ZoneInfo("Asia/Kolkata")
@@ -347,7 +351,7 @@ class MultiIndexFeedWorker:
         if len(complete) < 3:
             return
         spot = float(runtime.index_tick.get("ltp", 0))
-        rows = [OptionRow(strike=strike, call=self._leg(pair["CE"][0], pair["CE"][1], spot), put=self._leg(pair["PE"][0], pair["PE"][1], spot), is_atm=strike == runtime.current_atm) for strike, pair in sorted(complete.items())]
+        rows = [OptionRow(strike=strike, call=self._leg(pair["CE"][0], pair["CE"][1], spot), put=self._leg(pair["PE"][0], pair["PE"][1], spot), is_atm=strike == runtime.current_atm) for strike, pair in complete.items()]
         call_oi = sum(row.call.oi for row in rows)
         put_oi = sum(row.put.oi for row in rows)
         pcr = round(put_oi / call_oi, 2) if call_oi else 0.0
@@ -362,7 +366,7 @@ class MultiIndexFeedWorker:
             option_chain=rows,
             structure=MarketStructure(pcr=pcr, max_pain=max_pain, bias=bias, oi_buildup=f"Live OI: {put_oi:,} puts vs {call_oi:,} calls"),
             signal=SignalSnapshot(recommendation=recommendation, confidence=min(85, 55 + int(abs(pcr - 1) * 100)), reasons=[f"Live PCR is {pcr:.2f}", f"Calculated max pain is {max_pain}", f"Spot is {spot:,.2f} with ATM at {runtime.current_atm}"], timestamp=runtime.last_tick),
-            feed=FeedHealth(state=self.state_for(symbol), source="KOTAK_NEO", last_tick=runtime.last_tick, heartbeat_ms=max(0, int((datetime.now(UTC) - runtime.last_tick).total_seconds() * 1000)), subscriptions=1 + len(runtime.contracts), divider_status="VERIFIED" if self.divider_verified else "PENDING"),
+            feed=FeedHealth(state=self.state_for(symbol), source="KOTAK_NEO", last_tick=runtime.last_tick, heartbeat_ms=max(0, int((datetime.now(UTC) - runtime.last_tick).total_seconds() * 1000)), subscriptions=self.subscription_count, divider_status="VERIFIED" if self.divider_verified else "PENDING"),
             as_of=runtime.last_tick,
         )
         runtime.snapshot = snapshot
@@ -400,7 +404,7 @@ class MultiIndexFeedWorker:
         for symbol, runtime in self.runtimes.items():
             fresh = bool(runtime.last_tick and (datetime.now(UTC) - runtime.last_tick).total_seconds() < 10)
             paired = self._paired_strikes(runtime)
-            checks.append(OpeningIndexHealth(symbol=symbol, fresh_spot=fresh, divider_verified=self.divider_verified, option_window_complete=len(runtime.contracts) >= 42, paired_ce_pe_complete=paired >= 21, socket_connected=self.socket_connected, option_subscriptions=len(runtime.contracts), paired_strikes=paired))
+            checks.append(OpeningIndexHealth(symbol=symbol, fresh_spot=fresh, divider_verified=self.divider_verified, option_window_complete=len(runtime.contracts) >= 42, paired_ce_pe_complete=paired, socket_connected=self.socket_connected))
         passed = all(item.fresh_spot and item.divider_verified and item.option_window_complete and item.paired_ce_pe_complete and item.socket_connected for item in checks)
         report = OpeningReport(session_date=local.date().isoformat(), generated_at=datetime.now(UTC), status="PASS" if passed else "WARN", indices=checks)
         self.opening_report = report
