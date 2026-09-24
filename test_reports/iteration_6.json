@@ -1,0 +1,48 @@
+{
+  "iteration": 6,
+  "mode": "generate",
+  "summary": "Verified EMERGENT_LLM_KEY / Claude (Anthropic) integration end-to-end: safe env presence, /api/ai/status contract, live SSE stream operability, and no key leakage across backend responses, SSE output, or frontend source.",
+  "passed": 4,
+  "failed": 0,
+  "checks": [
+    {
+      "criterion": "EMERGENT_LLM_KEY exists and is read server-side",
+      "name": "test_tscheck_ai_status.py::test_ai_status_reports_claude_haiku_configuration",
+      "lane": "backend",
+      "status": "passed",
+      "evidence": "GET /api/ai/status -> 200 {\"configured\":true,\"provider\":\"anthropic\",\"model\":\"claude-haiku-4-5-20251001\",...}; backend/.env contains EMERGENT_LLM_KEY (1 occurrence, value never printed); response body scanned for leak markers (api_key, apikey, secret, emergent_llm_key, sk-) -- none found."
+    },
+    {
+      "criterion": "Claude integration reports configured without exposing secrets",
+      "name": "test_tscheck_ai_status.py",
+      "lane": "backend",
+      "status": "passed",
+      "evidence": "provider=anthropic, model=claude-haiku-4-5-20251001, capabilities={explain,chat,summary,alert} all asserted; no secret/key field present in JSON."
+    },
+    {
+      "criterion": "Configured key is operational",
+      "name": "test_tscheck_ai_stream_validation.py::test_stream_valid_request_emits_sse_without_credentials",
+      "lane": "backend",
+      "status": "passed",
+      "evidence": "POST /api/ai/stream {action:explain, symbol:NIFTY, session_id:tscheck-...} -> 200 text/event-stream, SSE contains 'data:' frames terminating with done:true, no error event, no credential markers in stream text."
+    },
+    {
+      "criterion": "Configured key is operational (UI)",
+      "name": "ai-explain-signal-streams",
+      "lane": "browser",
+      "status": "passed",
+      "evidence": "claude-analyst-card visible, status READY->STREAMING->READY, claude-output-text non-trivial (>10 chars), claude-demo-badge count=0 confirming LIVE (not demo-derived) output. Screenshots: ai-explain-signal-streams-streaming.png, ai-explain-signal-streams-explain-complete.png."
+    },
+    {
+      "criterion": "The key never crosses the backend boundary",
+      "name": "frontend-source-and-response-key-scan",
+      "lane": "backend",
+      "status": "passed",
+      "evidence": "grep -ril 'EMERGENT_LLM_KEY|sk-emergent' /app/frontend/src -> no matches; curl /api/ai/status piped through grep for 'sk-*'/'api_key' -> no matches; SSE stream and status body asserted free of key markers in tests above."
+    }
+  ],
+  "bugs": [],
+  "action_items": [],
+  "retest_needed": false,
+  "notes": "Reused pre-existing artifacts from prior iterations (test_tscheck_ai_status.py, test_tscheck_ai_stream_validation.py, ai-explain-signal-streams.mjs) which already fully cover this briefing's 4-criterion matrix; re-ran them fresh this iteration rather than duplicating. No code changes made; verification-only per spec_deviations."
+}
