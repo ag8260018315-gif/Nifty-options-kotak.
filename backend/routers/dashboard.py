@@ -15,6 +15,8 @@ from models.dashboard import (
     DashboardSnapshot,
     FeedHealth,
     FeedStatus,
+    ExportArchiveItem,
+    ExportArchiveResponse,
     IndexSymbol,
     MarketStructure,
     OpeningReport,
@@ -82,6 +84,31 @@ def _history_rows(document: dict) -> list[list[object]]:
             put["ltp"], put["change"], put["oi"], put["oi_change"], put["iv"], put["delta"],
         ])
     return rows
+
+
+async def _verified_export_documents(symbol: str, trading_day: str) -> list[dict]:
+    documents = await db.market_snapshot_history.find(
+        {"symbol": symbol, "trading_day": trading_day, "source": "KOTAK_NEO", "verified": True},
+        {"_id": 0},
+    ).sort("captured_at", 1).limit(5000).to_list(5000)
+    documents = [document for document in documents if _verified_document(document, symbol, trading_day)]
+    if documents:
+        return documents
+    latest = await db.market_snapshots.find_one({"_id": symbol}, {"_id": 0})
+    if not latest:
+        return []
+    last_tick = latest.get("feed", {}).get("last_tick")
+    aware_tick = last_tick.replace(tzinfo=timezone.utc) if isinstance(last_tick, datetime) and last_tick.tzinfo is None else last_tick
+    fallback = {
+        "symbol": symbol,
+        "trading_day": aware_tick.astimezone(IST).date().isoformat() if isinstance(aware_tick, datetime) else "",
+        "captured_at": aware_tick,
+        "source": "KOTAK_NEO",
+        "verified": True,
+        "feed_state": latest.get("feed", {}).get("state"),
+        "snapshot": latest,
+    }
+    return [fallback] if _verified_document(fallback, symbol, trading_day) else []
 
 
 def waiting_live_snapshot(symbol: IndexSymbol, status: FeedStatus) -> DashboardSnapshot:
@@ -154,32 +181,7 @@ async def get_opening_report() -> OpeningReport | None:
 @router.get("/export.csv")
 async def export_current_trading_day(symbol: IndexSymbol = Query(...)) -> StreamingResponse:
     trading_day = datetime.now(timezone.utc).astimezone(IST).date().isoformat()
-    documents = await db.market_snapshot_history.find(
-        {
-            "symbol": symbol,
-            "trading_day": trading_day,
-            "source": "KOTAK_NEO",
-            "verified": True,
-        },
-        {"_id": 0},
-    ).sort("captured_at", 1).limit(5000).to_list(5000)
-    documents = [document for document in documents if _verified_document(document, symbol, trading_day)]
-    if not documents:
-        latest = await db.market_snapshots.find_one({"_id": symbol}, {"_id": 0})
-        if latest:
-            last_tick = latest.get("feed", {}).get("last_tick")
-            aware_tick = last_tick.replace(tzinfo=timezone.utc) if isinstance(last_tick, datetime) and last_tick.tzinfo is None else last_tick
-            fallback = {
-                "symbol": symbol,
-                "trading_day": aware_tick.astimezone(IST).date().isoformat() if isinstance(aware_tick, datetime) else "",
-                "captured_at": aware_tick,
-                "source": "KOTAK_NEO",
-                "verified": True,
-                "feed_state": latest.get("feed", {}).get("state"),
-                "snapshot": latest,
-            }
-            if _verified_document(fallback, symbol, trading_day):
-                documents = [fallback]
+    documents = await _verified_export_documents(symbol, trading_day)
     if not documents:
         raise HTTPException(status_code=404, detail="No verified Kotak live data is available for this index today")
 
@@ -204,4 +206,31 @@ async def export_current_trading_day(symbol: IndexSymbol = Query(...)) -> Stream
             "Cache-Control": "no-store",
             "X-Content-Type-Options": "nosniff",
         },
+    )
+
+
+@router.get("/export-archive", response_model=ExportArchiveResponse)
+async def get_export_archive() -> ExportArchiveResponse:
+    trading_day = datetime.now(timezone.utc).astimezone(IST).date().isoformat()
+    manifest = await db.export_manifests.find_one({"trading_day": trading_day}, {"_id": 0, "prepared_at": 1})
+    items: list[ExportArchiveItem] = []
+    for symbol in ("NIFTY", "BANKNIFTY", "FINNIFTY"):
+        documents = await _verified_export_documents(symbol, trading_day)
+        captures = [document.get("captured_at") for document in documents if isinstance(document.get("captured_at"), datetime)]
+        row_count = sum(len(document.get("snapshot", {}).get("option_chain", [])) for document in documents)
+        items.append(
+            ExportArchiveItem(
+                symbol=symbol,
+                available=bool(documents),
+                snapshot_count=len(documents),
+                row_count=row_count,
+                first_capture=min(captures) if captures else None,
+                last_capture=max(captures) if captures else None,
+                filename=f"{symbol}-{trading_day}-kotak-live.csv" if documents else None,
+            )
+        )
+    return ExportArchiveResponse(
+        trading_day=trading_day,
+        prepared_at=manifest.get("prepared_at") if manifest else None,
+        items=items,
     )

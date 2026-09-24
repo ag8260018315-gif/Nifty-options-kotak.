@@ -6,7 +6,7 @@ from pydantic import BaseModel, Field
 
 IndexSymbol = Literal["NIFTY", "BANKNIFTY", "FINNIFTY"]
 MarketState = Literal["LIVE", "STALE", "EXPIRED", "MARKET_CLOSED", "DEMO"]
-FeedAlertType = Literal["ATM_SHIFT", "EXPIRY_DAY", "NEAR_CLOSE", "ROLL_REQUIRED", "OPENING_REPORT"]
+FeedAlertType = Literal["ATM_SHIFT", "EXPIRY_DAY", "NEAR_CLOSE", "ROLL_REQUIRED", "OPENING_REPORT", "EXPORT_READY"]
 
 
 class FeedAlert(BaseModel):
@@ -52,6 +52,22 @@ class OpeningReport(BaseModel):
     generated_at: datetime
     status: Literal["PASS", "WARN"]
     indices: list[OpeningIndexHealth]
+
+
+class ExportArchiveItem(BaseModel):
+    symbol: IndexSymbol
+    available: bool
+    snapshot_count: int
+    row_count: int
+    first_capture: datetime | None
+    last_capture: datetime | None
+    filename: str | None
+
+
+class ExportArchiveResponse(BaseModel):
+    trading_day: str
+    prepared_at: datetime | None
+    items: list[ExportArchiveItem]
 
 
 class FeedStatus(BaseModel):

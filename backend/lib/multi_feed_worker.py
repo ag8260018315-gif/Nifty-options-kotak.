@@ -202,6 +202,7 @@ class MultiIndexFeedWorker:
                         await self._add_alert("ROLL_REQUIRED", f"roll-{symbol}-{expiry}", f"{symbol} expiry rolled", f"Option subscriptions moved from {runtime.current_expiry} to {expiry}.", symbol)
                     runtime.current_expiry = expiry
                 if not _market_open():
+                    await self._prepare_closing_manifest()
                     self.socket_connected = False
                     self.authenticated = False
                     self.subscription_count = 0
@@ -380,6 +381,9 @@ class MultiIndexFeedWorker:
                 }
             )
             runtime.last_history_at = runtime.last_tick
+        if symbol == "FINNIFTY" and len(rows) >= 21 and self._alert_allowed():
+            day_key = runtime.last_tick.astimezone(IST).date().isoformat()
+            await self._add_alert("EXPORT_READY", f"export-ready-{symbol}-{day_key}", "FINNIFTY CSV is ready", "The first verified FINNIFTY spot and 21 paired CE/PE rows are now available to export.", symbol)
 
     def _paired_strikes(self, runtime: IndexRuntime) -> int:
         sides: dict[int, set[str]] = {}
@@ -413,6 +417,28 @@ class MultiIndexFeedWorker:
             await self._add_alert("EXPIRY_DAY", f"expiry-{symbol}-{day_key}", f"{symbol} expiry day", f"The selected contract expires today ({runtime.current_expiry}).", symbol)
         if local.weekday() < 5 and time(15, 15) <= local.time() < time(15, 30):
             await self._add_alert("NEAR_CLOSE", f"close-{symbol}-{day_key}", f"{symbol} expiry window near close", "NSE closes in under 15 minutes; review liquidity and expiry exposure.", symbol)
+
+    async def _prepare_closing_manifest(self) -> None:
+        local = datetime.now(UTC).astimezone(IST)
+        if local.weekday() >= 5 or local.time() < time(15, 31):
+            return
+        trading_day = local.date().isoformat()
+        if await db.export_manifests.find_one({"trading_day": trading_day}, {"_id": 1}):
+            return
+        items: list[dict[str, Any]] = []
+        for symbol, runtime in self.runtimes.items():
+            history_count = await db.market_snapshot_history.count_documents({"symbol": symbol, "trading_day": trading_day, "source": "KOTAK_NEO", "verified": True})
+            snapshot = runtime.snapshot
+            has_verified_latest = bool(
+                snapshot
+                and snapshot.feed.source == "KOTAK_NEO"
+                and snapshot.feed.last_tick
+                and snapshot.feed.last_tick.astimezone(IST).date().isoformat() == trading_day
+                and snapshot.spot.ltp > 0
+                and len(snapshot.option_chain) >= 21
+            )
+            items.append({"symbol": symbol, "available": bool(history_count or has_verified_latest), "snapshot_count": max(history_count, 1 if has_verified_latest else 0)})
+        await db.export_manifests.insert_one({"trading_day": trading_day, "prepared_at": datetime.now(UTC), "items": items})
 
     async def _add_alert(self, alert_type: str, alert_id: str, title: str, message: str, symbol: str | None) -> None:
         if alert_id in self.alert_ids:

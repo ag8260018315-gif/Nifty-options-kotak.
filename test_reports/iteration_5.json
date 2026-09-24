@@ -1,0 +1,68 @@
+{
+  "iteration": 5,
+  "passed": 8,
+  "failed": 0,
+  "bugs": [],
+  "action_items": [],
+  "retest_needed": false,
+  "checks": [
+    {
+      "criterion": "Automatic closing export manifest is prepared",
+      "name": "test_tscheck_export_archive_manifest.py::test_export_archive_manifest_prepared_after_close",
+      "lane": "backend",
+      "status": "passed",
+      "evidence": "GET /api/market-data/export-archive -> 200; trading_day=2026-09-24 (current IST day), prepared_at=2026-09-24T14:37:17.457000 (non-null), items contains exactly NIFTY/BANKNIFTY/FINNIFTY (3 items)."
+    },
+    {
+      "criterion": "Export archive accurately describes verified data",
+      "name": "test_tscheck_export_archive_manifest.py::test_export_archive_accurately_describes_verified_data",
+      "lane": "backend",
+      "status": "passed",
+      "evidence": "NIFTY/BANKNIFTY items: available=true, snapshot_count=1 (>=1), row_count=21 (>=21), filename='<SYM>-2026-09-24-kotak-live.csv'. FINNIFTY item: available=false, filename=null, snapshot_count=0."
+    },
+    {
+      "criterion": "Archive download controls work",
+      "name": "export-archive-card-controls",
+      "lane": "browser",
+      "status": "passed",
+      "evidence": "export-archive-card renders all 3 index items with correct counts/status; NIFTY and BANKNIFTY download buttons enabled and each produced a real download named <SYM>-YYYY-MM-DD-kotak-live.csv; FINNIFTY download button disabled and item shows 'Waiting for verified ticks'."
+    },
+    {
+      "criterion": "FINNIFTY readiness notification is implemented safely",
+      "name": "test_tscheck_export_archive_idempotent.py::test_finnifty_export_ready_alert_is_deduplicated / feed-alerts-surface-contract",
+      "lane": "backend+browser",
+      "status": "passed",
+      "evidence": "Backend: GET /api/market-data/feed-status -> 200; alerts array contains no duplicate ids for type EXPORT_READY (fires only once FINNIFTY has verified spot + 21 paired rows per lib/multi_feed_worker.py:384-386, dedup key export-ready-FINNIFTY-<day>). Browser: feed-alerts-surface-contract updated to allow-list EXPORT_READY (and OPENING_REPORT) alert types alongside existing ATM_SHIFT/EXPIRY_DAY/NEAR_CLOSE/ROLL_REQUIRED; toast/banner surface still renders correctly with no duplicate ids -- re-ran passing."
+    },
+    {
+      "criterion": "Direct verified-only export remains secure",
+      "name": "test_tscheck_csv_export_verified_indices.py / test_tscheck_finnifty_export_blocked.py",
+      "lane": "backend",
+      "status": "passed",
+      "evidence": "Re-ran unchanged from prior iteration: NIFTY/BANKNIFTY export.csv -> 200 with allow-listed columns only, attachment/no-store/nosniff headers, no baseurl/access_token/totp_secret/mpin/raw_packet markers; FINNIFTY export.csv -> 404 (blocked, unverified); invalid symbol -> 422."
+    },
+    {
+      "criterion": "Live data remains visible and truthful after close",
+      "name": "test_tscheck_dashboard_per_index_truthful.py / after-hours-ui-truthful",
+      "lane": "backend+browser",
+      "status": "passed",
+      "evidence": "Re-ran unchanged: NIFTY/BANKNIFTY dashboard shows last-verified real spot/chain/structure/signal under MARKET_CLOSED; FINNIFTY shows truthful null/waiting state with dash placeholders and a footnote, never DEMO fallback or fabricated ticks."
+    },
+    {
+      "criterion": "Existing live dashboard features remain intact",
+      "name": "dashboard-shell-intact-live-mode / dashboard-options-functional / demo-mode-safety-labels / csv-export-nifty-download / finnifty-market-closed-export-disabled / ai-ce-pe-alert-toast / ai-chat-interactive-question / ai-daily-summary-streams / ai-explain-signal-streams",
+      "lane": "browser",
+      "status": "passed",
+      "evidence": "All 9 pre-existing regression checks re-ran passing with the new export-archive-card present in the layout: selectors, option ladder, PCR/max pain, signal engine, opening report, alert controls, Claude analyst (explain/summary/alert/chat), Kotak connection panel, and direct Export CSV control all render with no console/failed-request errors."
+    },
+    {
+      "criterion": "Archive preparation is idempotent",
+      "name": "test_tscheck_export_archive_idempotent.py::test_export_manifest_is_unique_per_trading_day",
+      "lane": "backend",
+      "status": "passed",
+      "evidence": "Two consecutive GET /api/market-data/export-archive calls returned identical prepared_at; direct Mongo cross-check confirmed exactly 1 export_manifests document for trading_day=2026-09-24 (worker's find_one-before-insert guard in _prepare_closing_manifest prevents duplicates)."
+    }
+  ],
+  "notes": "New briefing added the after-hours export-archive manifest feature on top of the prior iteration's all-three-live spec. Probed http://localhost:8001/api/market-data/export-archive (200) before testing. Ran full backend pytest suite: 29/29 passed (25 pre-existing + 4 new assertions across 2 new files: test_tscheck_export_archive_manifest.py, test_tscheck_export_archive_idempotent.py). Added 1 new browser check (export-archive-card-controls: renders all 3 indices, NIFTY/BANKNIFTY real downloads, FINNIFTY disabled). Updated feed-alerts-surface-contract's allow-listed alert types to include EXPORT_READY (and OPENING_REPORT, previously missing) per the new FeedAlertType contract in models/dashboard.py; re-ran all 9 other pre-existing browser checks unchanged and all passed with the new archive card in the layout. 8 acceptance criteria covered across 8 backend/browser lane groupings (2 criteria intentionally reuse prior-iteration artifacts verbatim since the code paths are unchanged by this feature -- re-run and re-recorded as evidence, not skipped). 0 open bugs, 0 action items.",
+  "criteria_count": 8
+}

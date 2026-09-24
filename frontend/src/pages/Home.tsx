@@ -85,7 +85,7 @@ interface AuthStatus {
   message: string;
 }
 
-type FeedAlertType = "ATM_SHIFT" | "EXPIRY_DAY" | "NEAR_CLOSE" | "ROLL_REQUIRED" | "OPENING_REPORT";
+type FeedAlertType = "ATM_SHIFT" | "EXPIRY_DAY" | "NEAR_CLOSE" | "ROLL_REQUIRED" | "OPENING_REPORT" | "EXPORT_READY";
 
 interface FeedAlert {
   id: string;
@@ -148,6 +148,22 @@ interface FeedStatus {
   alert_settings: AlertSettings;
 }
 
+interface ExportArchiveItem {
+  symbol: IndexSymbol;
+  available: boolean;
+  snapshot_count: number;
+  row_count: number;
+  first_capture: string | null;
+  last_capture: string | null;
+  filename: string | null;
+}
+
+interface ExportArchiveResponse {
+  trading_day: string;
+  prepared_at: string | null;
+  items: ExportArchiveItem[];
+}
+
 type AiAction = "explain" | "chat" | "summary" | "alert";
 
 interface AiStatus {
@@ -173,6 +189,7 @@ const fetchDashboard = (symbol: IndexSymbol) =>
 const fetchAuthStatus = () => apiGet<AuthStatus>("/auth/status");
 const fetchAiStatus = () => apiGet<AiStatus>("/ai/status");
 const fetchFeedStatus = () => apiGet<FeedStatus>("/market-data/feed-status");
+const fetchExportArchive = () => apiGet<ExportArchiveResponse>("/market-data/export-archive");
 
 function formatPrice(value: number) {
   return numberFormat.format(value);
@@ -243,6 +260,7 @@ export default function Home() {
   const authQuery = useQuery({ queryKey: ["auth-status"], queryFn: fetchAuthStatus, retry: false });
   const aiStatusQuery = useQuery({ queryKey: ["ai-status"], queryFn: fetchAiStatus, retry: false });
   const feedStatusQuery = useQuery({ queryKey: ["feed-status"], queryFn: fetchFeedStatus, refetchInterval: 2000, retry: false });
+  const exportArchiveQuery = useQuery({ queryKey: ["export-archive"], queryFn: fetchExportArchive, refetchInterval: 30000, retry: false });
 
   useEffect(() => {
     const alerts = feedStatusQuery.data?.alerts ?? [];
@@ -301,8 +319,8 @@ export default function Home() {
   });
 
   const exportMutation = useMutation({
-    mutationFn: () => apiDownload(`/market-data/export.csv?symbol=${symbol}`),
-    onSuccess: ({ blob, filename }) => {
+    mutationFn: async (target: IndexSymbol) => ({ target, ...(await apiDownload(`/market-data/export.csv?symbol=${target}`)) }),
+    onSuccess: ({ blob, filename, target }) => {
       const url = URL.createObjectURL(blob);
       const anchor = document.createElement("a");
       anchor.href = url;
@@ -311,7 +329,7 @@ export default function Home() {
       anchor.click();
       anchor.remove();
       URL.revokeObjectURL(url);
-      toast.success(`${symbol} CSV exported`, { description: "Verified Kotak snapshots from the current trading day." });
+      toast.success(`${target} CSV exported`, { description: "Verified Kotak snapshots from the current trading day." });
     },
     onError: () => toast.error("No verified live data is available to export yet"),
   });
@@ -433,6 +451,13 @@ export default function Home() {
           </div>
         </section>
 
+        <section data-testid="export-archive-card" className="rounded-xl border border-emerald-500/15 bg-[#0e131d]/90 px-4 py-3">
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+            <div className="flex items-center gap-3"><div data-testid="export-archive-icon" className="flex size-9 items-center justify-center rounded-lg bg-emerald-500/10 text-emerald-300"><Download className="size-4" /></div><div><p data-testid="export-archive-title" className="text-sm font-semibold text-slate-200">Today’s verified exports</p><p data-testid="export-archive-status" className="mt-0.5 text-[11px] text-slate-500">{exportArchiveQuery.data?.prepared_at ? `Closing manifest prepared ${new Date(exportArchiveQuery.data.prepared_at).toLocaleTimeString("en-IN")}` : "Closing manifest prepares automatically after 15:31 IST"}</p></div></div>
+            <div className="flex flex-wrap gap-2">{(exportArchiveQuery.data?.items ?? []).map((item) => <div key={item.symbol} data-testid={`export-archive-item-${item.symbol.toLowerCase()}`} className="flex items-center gap-2 rounded-lg border border-[#253149] bg-[#090d15] px-2.5 py-2"><div><p data-testid={`export-archive-symbol-${item.symbol.toLowerCase()}`} className="font-mono text-[10px] font-semibold text-slate-300">{item.symbol}</p><p data-testid={`export-archive-count-${item.symbol.toLowerCase()}`} className="text-[9px] text-slate-600">{item.available ? `${item.snapshot_count} snapshots · ${item.row_count} rows` : "Waiting for verified ticks"}</p></div><Button data-testid={`export-archive-download-${item.symbol.toLowerCase()}`} type="button" variant="ghost" size="icon" className="size-7 text-emerald-300 hover:bg-emerald-500/10" disabled={!item.available || exportMutation.isPending} onClick={() => exportMutation.mutate(item.symbol)}><Download className="size-3.5" /></Button></div>)}</div>
+          </div>
+        </section>
+
         <section data-testid="market-summary-grid" className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
           <Card size="sm" className="border-[#202b42] bg-[#101621]/90 sm:col-span-2 xl:col-span-1">
             <CardContent className="p-4">
@@ -453,7 +478,7 @@ export default function Home() {
               <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                 <div><CardTitle data-testid="option-chain-title" className="font-heading text-base text-slate-100">Option chain / Greeks ladder</CardTitle><p data-testid="option-chain-subtitle" className="mt-1 text-xs text-slate-500">Calls on the left · puts on the right · ATM highlighted</p></div>
                 <div className="flex items-center gap-2">
-                  <Button data-testid="export-csv-button" type="button" variant="outline" size="sm" className="border-emerald-500/25 bg-emerald-500/5 text-[11px] text-emerald-300 hover:bg-emerald-500/10" disabled={!canExport || exportMutation.isPending} title={canExport ? `Export today's verified ${symbol} snapshots` : "Available after the first verified Kotak option snapshot"} onClick={() => exportMutation.mutate()}><Download className="mr-1.5 size-3.5" />{exportMutation.isPending ? "Preparing…" : "Export CSV"}</Button>
+                  <Button data-testid="export-csv-button" type="button" variant="outline" size="sm" className="border-emerald-500/25 bg-emerald-500/5 text-[11px] text-emerald-300 hover:bg-emerald-500/10" disabled={!canExport || exportMutation.isPending} title={canExport ? `Export today's verified ${symbol} snapshots` : "Available after the first verified Kotak option snapshot"} onClick={() => exportMutation.mutate(symbol)}><Download className="mr-1.5 size-3.5" />{exportMutation.isPending ? "Preparing…" : "Export CSV"}</Button>
                   <label data-testid="strike-filter-label" htmlFor="strike-filter-range" className="sr-only">Strike range</label>
                   <select id="strike-filter-range" data-testid="strike-filter-range" value={range} onChange={(event) => setRange(event.target.value)} className="rounded-md border border-[#2a364f] bg-[#111622] px-2.5 py-2 text-[11px] text-slate-300 outline-none focus:border-blue-500"><option value="3">±3 strikes</option><option value="5">±5 strikes</option><option value="10">±10 strikes</option></select>
                   <label data-testid="expiry-date-label" htmlFor="expiry-date-select" className="sr-only">Expiry</label>

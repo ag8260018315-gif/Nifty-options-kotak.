@@ -19,6 +19,7 @@ Single-user read-only NIFTY options terminal using the current Kotak Neo Trade A
 8. At the first tick after 09:16 IST, the worker persists a three-index opening report covering fresh spot, divider verification, ±10 option windows, paired CE/PE ticks, and socket health.
 9. Alert controls persist an ATM threshold (default one full strike), 60-second cooldown, and quiet hours from 15:30 to 09:15 IST through `/api/market-data/alert-settings`.
 10. `/api/market-data/export.csv?symbol=...` downloads only allow-listed, verified `KOTAK_NEO` normalized option snapshots from the current IST trading day. It returns 404 for DEMO, waiting, zero, or unavailable data and remains available after close for the last verified current-day snapshots.
+11. `/api/market-data/export-archive` lists per-index availability, snapshot/row counts, capture times, and a 15:31 IST auto-prepared manifest. FINNIFTY emits an `EXPORT_READY` alert when its first complete verified chain unlocks.
 
 ## Auth and roles
 Single user, no frontend auth yet. Future Kotak credentials belong only in `backend/.env`; tokens/session material must remain server-side and be encrypted before Mongo persistence.

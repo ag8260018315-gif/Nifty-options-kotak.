@@ -31,6 +31,7 @@ INDEXES: dict[str, list[IndexModel]] = {
     "market_snapshot_history": [
         IndexModel([("trading_day", ASCENDING), ("symbol", ASCENDING), ("captured_at", ASCENDING)], name="day_symbol_captured"),
     ],
+    "export_manifests": [IndexModel([("trading_day", ASCENDING)], name="trading_day", unique=True)],
 }
 
 
