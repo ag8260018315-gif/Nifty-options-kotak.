@@ -1,4 +1,5 @@
 import logging
+import asyncio
 import re
 import time
 from dataclasses import dataclass
@@ -38,8 +39,8 @@ def _pick(payload: dict[str, Any], *keys: str) -> Any:
     return None
 
 
-def _https_url(value: Any) -> str | None:
-    if not isinstance(value, str) or not re.match(r"^https://", value):
+def _service_url(value: Any, schemes: tuple[str, ...]) -> str | None:
+    if not isinstance(value, str) or not re.match(rf"^({'|'.join(schemes)})://", value):
         return None
     return value.rstrip("/")
 
@@ -96,8 +97,8 @@ class KotakNeoClient:
 
         token = _pick(result, "Auth", "auth", "token", "accessToken")
         sid = _pick(result, "Sid", "sid", "sessionId")
-        base_url = _https_url(_pick(result, "baseUrl", "baseURL"))
-        feed_url = _https_url(_pick(result, "feedUrl", "feedURL"))
+        base_url = _service_url(_pick(result, "baseUrl", "baseURL"), ("https",))
+        feed_url = _service_url(_pick(result, "feedUrl", "feedURL"), ("https", "wss"))
         if not token or not sid or not base_url:
             raise RuntimeError("tradeApiValidate did not return token, sid, and baseUrl")
 
@@ -124,17 +125,52 @@ class KotakNeoClient:
         )
         return self.session
 
+    async def restore_session(self) -> KotakSession | None:
+        if self.connected:
+            return self.session
+        try:
+            document = await db.kotak_sessions.find_one({"_id": "current"})
+            if not document or float(document.get("expires_at", 0)) <= time.time() + 30:
+                return None
+            base_url = _service_url(vault.open(document["base_url"]), ("https",))
+            feed_url = _service_url(vault.open(document["feed_url"]), ("https", "wss"))
+            if not base_url or not feed_url:
+                return None
+            self.session = KotakSession(
+                token=vault.open(document["token"]),
+                sid=vault.open(document["sid"]),
+                base_url=base_url,
+                feed_url=feed_url,
+                expires_at=float(document["expires_at"]),
+            )
+            return self.session
+        except Exception:
+            logger.warning("Stored Kotak session could not be restored")
+            return None
+
+    async def ensure_session(self) -> KotakSession:
+        if self.connected and self.session:
+            return self.session
+        restored = await self.restore_session()
+        return restored or await self.login()
+
+    def clear_session(self) -> None:
+        self.session = None
+
     async def authenticated_get(self, path: str, params: dict[str, str] | None = None) -> dict[str, Any]:
-        if not self.connected:
-            await self.login()
-        assert self.session is not None
-        url = f"{self.session.base_url}/{path.lstrip('/')}"
-        headers = {"Authorization": self.session.token, "Sid": self.session.sid, "Content-Type": "application/json"}
-        async with httpx.AsyncClient(timeout=15) as client:
-            response = await client.get(url, headers=headers, params=params)
-            response.raise_for_status()
-            body = response.json()
-        return body if isinstance(body, dict) else {"data": body}
+        session = await self.ensure_session()
+        url = f"{session.base_url}/{path.lstrip('/')}"
+        headers = {"Authorization": settings.access_token, "Content-Type": "application/x-www-form-urlencoded"}
+        for attempt in range(3):
+            async with httpx.AsyncClient(timeout=30) as client:
+                response = await client.get(url, headers=headers, params=params)
+            if response.status_code != 429 or attempt == 2:
+                response.raise_for_status()
+                body = response.json()
+                return body if isinstance(body, dict) else {"data": body}
+            retry_after = response.headers.get("Retry-After", "1")
+            await asyncio.sleep(min(max(float(retry_after), 1), 10))
+        raise RuntimeError("Kotak request retry loop exited unexpectedly")
 
 
 kotak_client = KotakNeoClient()

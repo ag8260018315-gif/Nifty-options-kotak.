@@ -1,5 +1,6 @@
 import asyncio
 from contextlib import asynccontextmanager
+from contextlib import suppress
 from fastapi import FastAPI, APIRouter
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
@@ -13,6 +14,7 @@ load_dotenv(ROOT_DIR / '.env')
 
 # MongoDB connection
 from lib.db import client, db, ensure_indexes
+from lib.feed_worker import feed_worker
 from lib.settings import settings
 from routers import ai, auth, dashboard
 
@@ -21,7 +23,11 @@ from routers import ai, auth, dashboard
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     app.state.index_task = asyncio.create_task(ensure_indexes())  # background: a big index build must not block boot
+    app.state.feed_task = asyncio.create_task(feed_worker.run())
     yield
+    app.state.feed_task.cancel()
+    with suppress(asyncio.CancelledError):
+        await app.state.feed_task
     client.close()
 
 

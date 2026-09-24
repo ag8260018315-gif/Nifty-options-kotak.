@@ -1,6 +1,7 @@
 from fastapi import APIRouter, HTTPException
 
 from lib.kotak_client import kotak_client
+from lib.feed_worker import feed_worker
 from lib.settings import settings
 from models.auth import AuthStatus, DemoModeRequest, KotakConnectRequest
 
@@ -29,9 +30,11 @@ def current_status() -> AuthStatus:
         connected=connected,
         configured_fields=configured_fields,
         missing_fields=missing_fields,
-        feed_connected=False,
+        feed_connected=feed_worker.socket_connected,
         message=(
-            "Kotak v2 session is active server-side; tokens and dynamic URLs never leave FastAPI."
+            "Kotak v2 session and SFeed are active server-side; tokens and dynamic URLs never leave FastAPI."
+            if connected and feed_worker.socket_connected
+            else "Kotak v2 session is active; SFeed is reconnecting or waiting for market ticks."
             if connected
             else "Kotak v2 configuration is complete. Use Connect Kotak Neo to run the server-side TOTP and MPIN flow."
             if configured

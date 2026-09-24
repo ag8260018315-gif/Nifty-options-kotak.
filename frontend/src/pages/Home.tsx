@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Activity, ArrowUpRight, Bell, Bot, Check, ChevronDown, CircleHelp, Cloud, FileText, Gauge, KeyRound, LockKeyhole, MessageSquare, RefreshCw, Send, ShieldCheck, Sparkles, Wifi } from "lucide-react";
 import { toast } from "sonner";
@@ -21,7 +21,7 @@ interface SpotSnapshot {
   pct_change: number;
   high: number;
   low: number;
-  timestamp: string;
+  timestamp: string | null;
 }
 
 interface OptionLeg {
@@ -51,13 +51,13 @@ interface SignalSnapshot {
   recommendation: "BUY CALLS" | "BUY PUTS" | "WAIT";
   confidence: number;
   reasons: string[];
-  timestamp: string;
+  timestamp: string | null;
 }
 
 interface FeedHealth {
   state: MarketState;
   source: "KOTAK_NEO" | "DEMO";
-  last_tick: string;
+  last_tick: string | null;
   heartbeat_ms: number;
   subscriptions: number;
   divider_status: "VERIFIED" | "PENDING";
@@ -85,6 +85,29 @@ interface AuthStatus {
   message: string;
 }
 
+type FeedAlertType = "ATM_SHIFT" | "EXPIRY_DAY" | "NEAR_CLOSE" | "ROLL_REQUIRED";
+
+interface FeedAlert {
+  id: string;
+  type: FeedAlertType;
+  title: string;
+  message: string;
+  created_at: string;
+}
+
+interface FeedStatus {
+  state: Exclude<MarketState, "DISCONNECTED">;
+  connected: boolean;
+  authenticated: boolean;
+  last_tick: string | null;
+  subscriptions: number;
+  divider_verified: boolean;
+  atm_strike: number | null;
+  expiry: string | null;
+  message: string;
+  alerts: FeedAlert[];
+}
+
 type AiAction = "explain" | "chat" | "summary" | "alert";
 
 interface AiStatus {
@@ -109,6 +132,7 @@ const fetchDashboard = (symbol: IndexSymbol) =>
   apiGet<DashboardSnapshot>(`/market-data/dashboard?symbol=${symbol}`);
 const fetchAuthStatus = () => apiGet<AuthStatus>("/auth/status");
 const fetchAiStatus = () => apiGet<AiStatus>("/ai/status");
+const fetchFeedStatus = () => apiGet<FeedStatus>("/market-data/feed-status");
 
 function formatPrice(value: number) {
   return numberFormat.format(value);
@@ -162,6 +186,8 @@ export default function Home() {
   const [aiAction, setAiAction] = useState<AiAction>("explain");
   const [chatQuestion, setChatQuestion] = useState("");
   const [aiSessionId] = useState(() => window.crypto.randomUUID());
+  const seenFeedAlerts = useRef<Set<string>>(new Set());
+  const alertsInitialized = useRef(false);
 
   const dashboardQuery = useQuery({
     queryKey: ["dashboard", symbol],
@@ -171,6 +197,24 @@ export default function Home() {
   });
   const authQuery = useQuery({ queryKey: ["auth-status"], queryFn: fetchAuthStatus, retry: false });
   const aiStatusQuery = useQuery({ queryKey: ["ai-status"], queryFn: fetchAiStatus, retry: false });
+  const feedStatusQuery = useQuery({ queryKey: ["feed-status"], queryFn: fetchFeedStatus, refetchInterval: 2000, retry: false });
+
+  useEffect(() => {
+    const alerts = feedStatusQuery.data?.alerts ?? [];
+    if (!alertsInitialized.current) {
+      alerts.forEach((alert) => seenFeedAlerts.current.add(alert.id));
+      alertsInitialized.current = true;
+      return;
+    }
+    for (const alert of alerts) {
+      if (seenFeedAlerts.current.has(alert.id)) continue;
+      seenFeedAlerts.current.add(alert.id);
+      toast(alert.title, { description: alert.message });
+      if ("Notification" in window && Notification.permission === "granted") {
+        new Notification(alert.title, { body: alert.message });
+      }
+    }
+  }, [feedStatusQuery.data?.alerts]);
 
   const demoMutation = useMutation({
     mutationFn: () => apiPost<AuthStatus>("/auth/demo", { confirm: true }),
@@ -228,14 +272,18 @@ export default function Home() {
   };
 
   const data = dashboardQuery.data;
-  const feedState = (data?.feed.state ?? (authQuery.data?.state === "LIVE" ? "STALE" : authQuery.data?.state ?? "DEMO")) as MarketState;
+  const feedState = (feedStatusQuery.data?.state ?? data?.feed.state ?? (authQuery.data?.state === "LIVE" ? "STALE" : authQuery.data?.state ?? "DEMO")) as MarketState;
   const modeLabel = authQuery.data?.mode ?? "DEMO";
   const visibleRows = useMemo(() => {
     if (!data) return [];
     return data.option_chain.filter((row) => Math.abs(row.strike - data.structure.max_pain) <= Number(range) * 50);
   }, [data, range]);
   const authMessage = authQuery.data?.message ?? "Checking the server-side Kotak configuration…";
-  const lastTick = data ? new Date(data.feed.last_tick).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", second: "2-digit" }) : "—";
+  const lastTickValue = feedStatusQuery.data ? feedStatusQuery.data.last_tick : data?.feed.last_tick;
+  const lastTick = lastTickValue ? new Date(lastTickValue).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", second: "2-digit" }) : "—";
+  const latestFeedAlert = feedStatusQuery.data?.alerts[0];
+  const hasMarketTick = data?.feed.source === "DEMO" || Boolean(feedStatusQuery.data?.last_tick);
+  const hasChainData = visibleRows.length > 0;
 
   return (
     <div data-testid="app-shell" className="min-h-svh bg-[#07090e] text-slate-100">
@@ -259,7 +307,7 @@ export default function Home() {
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
             <nav data-testid="index-selector" className="flex items-center gap-1 rounded-lg border border-[#202b42] bg-[#0e131d] p-1">
               {SYMBOLS.map((item) => (
-                <button key={item} data-testid={`index-selector-${item.toLowerCase()}`} type="button" onClick={() => setSymbol(item)} className={`data-hover rounded-md px-3 py-2 text-[11px] font-semibold tracking-wide ${symbol === item ? "bg-[#1f2a41] text-white shadow-inner" : "text-slate-500 hover:text-slate-200"}`}>
+                <button key={item} data-testid={`index-selector-${item.toLowerCase()}`} type="button" onClick={() => setSymbol(item)} disabled={modeLabel === "LIVE" && item !== "NIFTY"} title={modeLabel === "LIVE" && item !== "NIFTY" ? "First live SFeed worker supports NIFTY only" : item} className={`data-hover rounded-md px-3 py-2 text-[11px] font-semibold tracking-wide disabled:cursor-not-allowed disabled:opacity-35 ${symbol === item ? "bg-[#1f2a41] text-white shadow-inner" : "text-slate-500 hover:text-slate-200"}`}>
                   {item}
                 </button>
               ))}
@@ -291,18 +339,20 @@ export default function Home() {
           <div data-testid="data-integrity-note" className="flex items-center gap-2 self-start rounded-md border border-[#202b42] bg-[#0e131d]/70 px-3 py-2 text-[10px] text-slate-500 sm:self-auto"><ShieldCheck className="size-3.5 text-emerald-400" />Data integrity guard active</div>
         </section>
 
+        {latestFeedAlert && <section data-testid="feed-alert-banner" className="flex flex-col gap-2 rounded-lg border border-amber-500/25 bg-amber-500/5 px-4 py-3 sm:flex-row sm:items-center sm:justify-between"><div className="flex items-start gap-2.5"><Bell data-testid="feed-alert-icon" className="mt-0.5 size-4 shrink-0 text-amber-300" /><div><p data-testid="feed-alert-title" className="text-xs font-semibold text-amber-200">{latestFeedAlert.title}</p><p data-testid="feed-alert-message" className="mt-0.5 text-[11px] text-amber-100/60">{latestFeedAlert.message}</p></div></div><Badge data-testid="feed-alert-type" className="self-start border-amber-500/25 bg-amber-500/10 text-[9px] text-amber-300 sm:self-auto">{latestFeedAlert.type.replaceAll("_", " ")}</Badge></section>}
+
         <section data-testid="market-summary-grid" className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
           <Card size="sm" className="border-[#202b42] bg-[#101621]/90 sm:col-span-2 xl:col-span-1">
             <CardContent className="p-4">
-              <div className="flex items-start justify-between"><p data-testid="ticker-spot-price-label" className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-500">Spot price</p><span data-testid="ticker-atm-strike-badge" className="rounded-full border border-blue-500/30 bg-blue-500/10 px-2 py-0.5 font-mono text-[10px] text-blue-300">ATM {data?.structure.max_pain ?? "—"}</span></div>
-              <p data-testid="ticker-spot-price" className="mt-2 font-mono text-2xl font-bold tabular-nums tracking-tight text-white">{data ? formatPrice(data.spot.ltp) : "—"}</p>
-              <div className="mt-1 flex items-center gap-2"><span data-testid="ticker-day-change" className="font-mono text-xs font-semibold text-emerald-400">{data ? `+${formatPrice(data.spot.change)} (+${data.spot.pct_change}%)` : "Waiting for snapshot"}</span><ArrowUpRight className="size-3 text-emerald-400" /></div>
-              <div className="mt-3 flex justify-between border-t border-[#202b42] pt-2 text-[10px] text-slate-500"><span data-testid="ticker-day-range-high">H {data ? formatPrice(data.spot.high) : "—"}</span><span data-testid="ticker-day-range-low">L {data ? formatPrice(data.spot.low) : "—"}</span></div>
+              <div className="flex items-start justify-between"><p data-testid="ticker-spot-price-label" className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-500">Spot price</p><span data-testid="ticker-atm-strike-badge" className="rounded-full border border-blue-500/30 bg-blue-500/10 px-2 py-0.5 font-mono text-[10px] text-blue-300">ATM {hasMarketTick ? data?.structure.max_pain ?? "—" : "—"}</span></div>
+              <p data-testid="ticker-spot-price" className="mt-2 font-mono text-2xl font-bold tabular-nums tracking-tight text-white">{data && hasMarketTick ? formatPrice(data.spot.ltp) : "—"}</p>
+              <div className="mt-1 flex items-center gap-2"><span data-testid="ticker-day-change" className="font-mono text-xs font-semibold text-emerald-400">{data && hasMarketTick ? `${data.spot.change >= 0 ? "+" : ""}${formatPrice(data.spot.change)} (${data.spot.pct_change >= 0 ? "+" : ""}${data.spot.pct_change}%)` : "Waiting for first Kotak tick"}</span>{hasMarketTick && <ArrowUpRight className="size-3 text-emerald-400" />}</div>
+              <div className="mt-3 flex justify-between border-t border-[#202b42] pt-2 text-[10px] text-slate-500"><span data-testid="ticker-day-range-high">H {data && hasMarketTick ? formatPrice(data.spot.high) : "—"}</span><span data-testid="ticker-day-range-low">L {data && hasMarketTick ? formatPrice(data.spot.low) : "—"}</span></div>
             </CardContent>
           </Card>
-          <MetricCard label="Put / call ratio" value={data ? data.structure.pcr.toFixed(2) : "—"} detail={data?.structure.oi_buildup ?? "Awaiting option chain"} icon={Gauge} accent="text-blue-300" testId="pcr-gauge-value" />
-          <MetricCard label="Max pain" value={data ? formatInteger(data.structure.max_pain) : "—"} detail={data ? `${data.structure.bias} structure bias` : "Awaiting structure"} icon={Activity} accent={data?.structure.bias === "BULLISH" ? "text-emerald-300" : "text-slate-100"} testId="max-pain-value" />
-          <MetricCard label="SFeed socket health" value={data ? `${data.feed.heartbeat_ms} ms` : "—"} detail={data ? `${data.feed.subscriptions} instruments · divider ${data.feed.divider_status.toLowerCase()}` : "Server snapshot pending"} icon={Wifi} accent="text-emerald-300" testId="feed-health-value" />
+          <MetricCard label="Put / call ratio" value={data && hasChainData ? data.structure.pcr.toFixed(2) : "—"} detail={data?.structure.oi_buildup ?? "Awaiting option chain"} icon={Gauge} accent="text-blue-300" testId="pcr-gauge-value" />
+          <MetricCard label="Max pain" value={data && hasChainData ? formatInteger(data.structure.max_pain) : "—"} detail={data && hasChainData ? `${data.structure.bias} structure bias` : "Awaiting live option ticks"} icon={Activity} accent={data?.structure.bias === "BULLISH" ? "text-emerald-300" : "text-slate-100"} testId="max-pain-value" />
+          <MetricCard label="SFeed socket health" value={feedStatusQuery.data?.connected ? "CONNECTED" : feedState} detail={feedStatusQuery.data ? `${feedStatusQuery.data.subscriptions} instruments · divider ${feedStatusQuery.data.divider_verified ? "verified" : "pending"}` : "Server feed health pending"} icon={Wifi} accent={feedStatusQuery.data?.connected ? "text-emerald-300" : "text-amber-300"} testId="feed-health-value" />
         </section>
 
         <section className="grid items-start gap-4 xl:grid-cols-[minmax(0,7fr)_minmax(320px,5fr)]">
@@ -329,14 +379,14 @@ export default function Home() {
                   </tr>)}</tbody>
                 </table>
               </div>
-              <div data-testid="option-chain-footnote" className="flex items-center justify-between border-t border-[#202b42] px-4 py-3 text-[10px] text-slate-500"><span>{data ? `${visibleRows.length} strikes around ATM · simulated snapshot` : "Loading normalized chain…"}</span><span className="font-mono tabular-nums">as of {data ? new Date(data.as_of).toLocaleTimeString("en-IN") : "—"}</span></div>
+              <div data-testid="option-chain-footnote" className="flex items-center justify-between border-t border-[#202b42] px-4 py-3 text-[10px] text-slate-500"><span>{data && hasChainData ? `${visibleRows.length} strikes around ATM · ${data.feed.source === "DEMO" ? "simulated" : "Kotak Neo live"} snapshot` : feedStatusQuery.data?.message ?? "Loading normalized chain…"}</span><span className="font-mono tabular-nums">as of {data && hasChainData ? new Date(data.as_of).toLocaleTimeString("en-IN") : "—"}</span></div>
             </CardContent>
           </Card>
 
           <div className="space-y-4">
-            <Card data-testid="market-structure-card" className="border-[#202b42] bg-[#101621]/90"><CardHeader className="flex-row items-center justify-between border-b border-[#202b42] px-4 py-3"><div><CardTitle data-testid="market-structure-title" className="font-heading text-base text-slate-100">Market structure</CardTitle><p data-testid="market-structure-subtitle" className="mt-1 text-xs text-slate-500">What the chain is leaning toward</p></div><CircleHelp data-testid="market-structure-help" className="size-4 text-slate-600" /></CardHeader><CardContent className="space-y-4 p-4"><div className="flex items-center justify-between"><span data-testid="pcr-interpretation-label" className="text-xs text-slate-400">PCR interpretation</span><Badge data-testid="pcr-interpretation-badge" className="border-emerald-500/30 bg-emerald-500/10 text-[10px] text-emerald-300">{data?.structure.bias ?? "—"}</Badge></div><div className="grid grid-cols-2 gap-3"><div className="rounded-lg border border-[#202b42] bg-[#0e131d] p-3"><p data-testid="structure-pcr-label" className="text-[10px] uppercase tracking-wider text-slate-500">PCR</p><p data-testid="structure-pcr-value" className="mt-2 font-mono text-lg font-bold text-white">{data?.structure.pcr.toFixed(2) ?? "—"}</p></div><div className="rounded-lg border border-[#202b42] bg-[#0e131d] p-3"><p data-testid="structure-max-pain-label" className="text-[10px] uppercase tracking-wider text-slate-500">Max pain</p><p data-testid="structure-max-pain-value" className="mt-2 font-mono text-lg font-bold text-white">{data ? formatInteger(data.structure.max_pain) : "—"}</p></div></div><div data-testid="oi-buildup-summary" className="rounded-lg border border-blue-500/20 bg-blue-500/5 px-3 py-3"><p data-testid="oi-buildup-label" className="text-[10px] uppercase tracking-wider text-blue-300/70">OI buildup</p><p data-testid="oi-buildup-value" className="mt-1 text-sm text-blue-100">{data?.structure.oi_buildup ?? "Waiting for option chain"}</p></div></CardContent></Card>
+            <Card data-testid="market-structure-card" className="border-[#202b42] bg-[#101621]/90"><CardHeader className="flex-row items-center justify-between border-b border-[#202b42] px-4 py-3"><div><CardTitle data-testid="market-structure-title" className="font-heading text-base text-slate-100">Market structure</CardTitle><p data-testid="market-structure-subtitle" className="mt-1 text-xs text-slate-500">What the chain is leaning toward</p></div><CircleHelp data-testid="market-structure-help" className="size-4 text-slate-600" /></CardHeader><CardContent className="space-y-4 p-4"><div className="flex items-center justify-between"><span data-testid="pcr-interpretation-label" className="text-xs text-slate-400">PCR interpretation</span><Badge data-testid="pcr-interpretation-badge" className="border-emerald-500/30 bg-emerald-500/10 text-[10px] text-emerald-300">{data && hasChainData ? data.structure.bias : "WAITING"}</Badge></div><div className="grid grid-cols-2 gap-3"><div className="rounded-lg border border-[#202b42] bg-[#0e131d] p-3"><p data-testid="structure-pcr-label" className="text-[10px] uppercase tracking-wider text-slate-500">PCR</p><p data-testid="structure-pcr-value" className="mt-2 font-mono text-lg font-bold text-white">{data && hasChainData ? data.structure.pcr.toFixed(2) : "—"}</p></div><div className="rounded-lg border border-[#202b42] bg-[#0e131d] p-3"><p data-testid="structure-max-pain-label" className="text-[10px] uppercase tracking-wider text-slate-500">Max pain</p><p data-testid="structure-max-pain-value" className="mt-2 font-mono text-lg font-bold text-white">{data && hasChainData ? formatInteger(data.structure.max_pain) : "—"}</p></div></div><div data-testid="oi-buildup-summary" className="rounded-lg border border-blue-500/20 bg-blue-500/5 px-3 py-3"><p data-testid="oi-buildup-label" className="text-[10px] uppercase tracking-wider text-blue-300/70">OI buildup</p><p data-testid="oi-buildup-value" className="mt-1 text-sm text-blue-100">{data?.structure.oi_buildup ?? "Waiting for option chain"}</p></div></CardContent></Card>
 
-            <Card data-testid="signal-engine-card" className="signal-pulse border-emerald-500/20 bg-[#101621]/90"><CardHeader className="flex-row items-center justify-between border-b border-[#202b42] px-4 py-3"><div><CardTitle data-testid="signal-engine-title" className="font-heading text-base text-slate-100">Signal engine</CardTitle><p data-testid="signal-engine-subtitle" className="mt-1 text-xs text-slate-500">Normalized inputs · read-only guidance</p></div><Badge data-testid="signal-engine-status" className="border-emerald-500/30 bg-emerald-500/10 text-[10px] text-emerald-300">ACTIVE</Badge></CardHeader><CardContent className="space-y-4 p-4"><div className="flex items-end justify-between"><div><p data-testid="signal-recommendation-label" className="text-[10px] uppercase tracking-[0.16em] text-slate-500">Recommendation</p><p data-testid="signal-recommendation-badge" className="mt-1 font-heading text-xl font-bold text-emerald-300">{data?.signal.recommendation ?? "—"}</p></div><div className="text-right"><p data-testid="signal-confidence-label" className="text-[10px] uppercase tracking-wider text-slate-500">Confidence</p><p data-testid="signal-confidence-value" className="mt-1 font-mono text-lg font-bold text-white">{data ? `${data.signal.confidence}%` : "—"}</p></div></div><div data-testid="signal-confidence-meter" className="h-1.5 overflow-hidden rounded-full bg-[#202b42]"><div className="h-full rounded-full bg-emerald-400 transition-[width] duration-500" style={{ width: `${data?.signal.confidence ?? 0}%` }} /></div><ul data-testid="signal-breakdown-reasons" className="space-y-2">{(data?.signal.reasons ?? ["Waiting for normalized market inputs"]).map((reason, index) => <li key={reason} data-testid={`signal-reason-${index}`} className="flex items-start gap-2 text-xs text-slate-400"><Check className="mt-0.5 size-3.5 shrink-0 text-emerald-400" />{reason}</li>)}</ul><p data-testid="signal-timestamp" className="border-t border-[#202b42] pt-3 font-mono text-[10px] text-slate-600">Updated {data ? new Date(data.signal.timestamp).toLocaleTimeString("en-IN") : "—"} · informational only</p></CardContent></Card>
+            <Card data-testid="signal-engine-card" className="signal-pulse border-emerald-500/20 bg-[#101621]/90"><CardHeader className="flex-row items-center justify-between border-b border-[#202b42] px-4 py-3"><div><CardTitle data-testid="signal-engine-title" className="font-heading text-base text-slate-100">Signal engine</CardTitle><p data-testid="signal-engine-subtitle" className="mt-1 text-xs text-slate-500">Normalized inputs · read-only guidance</p></div><Badge data-testid="signal-engine-status" className="border-emerald-500/30 bg-emerald-500/10 text-[10px] text-emerald-300">{hasChainData ? "ACTIVE" : "WAITING"}</Badge></CardHeader><CardContent className="space-y-4 p-4"><div className="flex items-end justify-between"><div><p data-testid="signal-recommendation-label" className="text-[10px] uppercase tracking-[0.16em] text-slate-500">Recommendation</p><p data-testid="signal-recommendation-badge" className="mt-1 font-heading text-xl font-bold text-emerald-300">{data?.signal.recommendation ?? "—"}</p></div><div className="text-right"><p data-testid="signal-confidence-label" className="text-[10px] uppercase tracking-wider text-slate-500">Confidence</p><p data-testid="signal-confidence-value" className="mt-1 font-mono text-lg font-bold text-white">{data ? `${data.signal.confidence}%` : "—"}</p></div></div><div data-testid="signal-confidence-meter" className="h-1.5 overflow-hidden rounded-full bg-[#202b42]"><div className="h-full rounded-full bg-emerald-400 transition-[width] duration-500" style={{ width: `${data?.signal.confidence ?? 0}%` }} /></div><ul data-testid="signal-breakdown-reasons" className="space-y-2">{(data?.signal.reasons ?? ["Waiting for normalized market inputs"]).map((reason, index) => <li key={reason} data-testid={`signal-reason-${index}`} className="flex items-start gap-2 text-xs text-slate-400"><Check className="mt-0.5 size-3.5 shrink-0 text-emerald-400" />{reason}</li>)}</ul><p data-testid="signal-timestamp" className="border-t border-[#202b42] pt-3 font-mono text-[10px] text-slate-600">Updated {data && hasChainData && data.signal.timestamp ? new Date(data.signal.timestamp).toLocaleTimeString("en-IN") : "—"} · informational only</p></CardContent></Card>
 
             <Card data-testid="claude-analyst-card" className="overflow-hidden border-[#315080]/60 bg-[#101621]/95 shadow-[0_16px_40px_rgba(28,74,135,0.12)]">
               <CardHeader className="flex-row items-center justify-between border-b border-[#202b42] px-4 py-3">

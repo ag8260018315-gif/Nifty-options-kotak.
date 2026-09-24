@@ -14,6 +14,8 @@ class NeoSettings(BaseModel):
     neo_fin_key: str = "neotradeapi"
     vault_key: str = ""
     option_chain_path: str = "/market-data/1.0/watchlist/option-chain"
+    nifty_index_token: str = "26000"
+    scrip_master_path: str = "/script-details/1.0/masterscrip/file-paths"
 
     @classmethod
     def from_env(cls) -> "NeoSettings":
@@ -29,6 +31,8 @@ class NeoSettings(BaseModel):
             neo_fin_key=os.environ.get("KOTAK_NEO_FIN_KEY", "neotradeapi"),
             vault_key=os.environ.get("KOTAK_VAULT_KEY", ""),
             option_chain_path=os.environ.get("KOTAK_OPTION_CHAIN_PATH", "/market-data/1.0/watchlist/option-chain"),
+            nifty_index_token=os.environ.get("KOTAK_NIFTY_INDEX_TOKEN", "26000"),
+            scrip_master_path=os.environ.get("KOTAK_SCRIP_MASTER_PATH", "/script-details/1.0/masterscrip/file-paths"),
         )
 
     @property

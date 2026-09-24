@@ -1,0 +1,74 @@
+{
+  "iteration": 2,
+  "passed": 8,
+  "failed": 1,
+  "bugs": [
+    {
+      "severity": "medium",
+      "criterion": "Dashboard never silently falls back to DEMO in LIVE mode",
+      "description": "GET /api/market-data/dashboard?symbol=NIFTY correctly reports source=KOTAK_NEO, state=MARKET_CLOSED, spot.ltp=0 and an empty option_chain before any real tick -- but backend/routers/dashboard.py's waiting_live_snapshot() sets feed.last_tick = datetime.now(UTC) (line 24: `last_tick = status.last_tick or now`) whenever no real tick exists yet. This fabricates a tick timestamp: GET /api/market-data/feed-status correctly reports last_tick=null (no real tick), but the very same moment GET /api/market-data/dashboard?symbol=NIFTY reports feed.last_tick as a live-looking ISO timestamp equal to the request time. models/dashboard.py's FeedHealth.last_tick is a required (non-Optional) datetime, which forces this fabrication. This directly violates the 'no fake last_tick exists' / 'not simulated data or fake prices' contract even though the rest of the payload (source, state, spot, chain) is correct.",
+      "evidence": "pytest tests/test_tscheck_dashboard_market_closed_truthful.py::test_dashboard_reports_kotak_neo_market_closed_with_empty_chain_before_ticks -> AssertionError: feed-status reports no real tick yet (last_tick=null), but the dashboard's feed.last_tick was '2026-09-24T01:09:30.436462Z'. Reproduced 3x across separate pytest runs (01:07:46, 01:07:?, 01:09:30 -- each within milliseconds of the request), confirming it is not flaky. Direct curl cross-check: `curl /api/market-data/feed-status` -> {\"last_tick\":null,...} vs `curl /api/market-data/dashboard?symbol=NIFTY` -> {\"feed\":{\"last_tick\":\"<current server time>\",\"source\":\"KOTAK_NEO\",\"state\":\"MARKET_CLOSED\"}}."
+    }
+  ],
+  "action_items": [],
+  "retest_needed": true,
+  "checks": [
+    {
+      "criterion": "Kotak authenticated session restores without repeated after-hours logins",
+      "name": "test_tscheck_kotak_session_persists.py::test_auth_status_stays_live_configured_connected_across_35_seconds",
+      "lane": "backend",
+      "status": "passed",
+      "evidence": "Polled GET /api/auth/status every 7s for 35s -> 200 each time with mode=LIVE, configured=true, connected=true on all 5 polls; grepped backend.err.log for new 'tradeApiLogin' occurrences during the 35s window -> 0 new logins (session reused, not re-logged-in)."
+    },
+    {
+      "criterion": "Current SFeed worker respects market hours and auto-start contract",
+      "name": "test_tscheck_feed_market_hours_contract.py (2 tests)",
+      "lane": "backend",
+      "status": "passed",
+      "evidence": "GET /api/market-data/feed-status -> 200 {state:MARKET_CLOSED, connected:false, authenticated:false, last_tick:null, subscriptions:0, message contains '09:15'..'15:30'}; alerts field is a typed, id-deduplicated list with no credential markers (baseurl/feedurl/access_token/totp_secret/mpin/sid/consumer_secret) in the response body."
+    },
+    {
+      "criterion": "Current NIFTY contract discovery is ready",
+      "name": "test_tscheck_nifty_contract_discovery.py (2 tests)",
+      "lane": "backend",
+      "status": "passed",
+      "evidence": "GET /api/market-data/feed-status -> expiry='2026-09-29' (matches seed fact, live scrip-master selected expiry); GET /api/market-data/dashboard?symbol=NIFTY -> expiry present; neither response contains baseurl/feedurl/sid/access_token/totp_secret/consumer_secret/mpin markers."
+    },
+    {
+      "criterion": "7207 and 7208 native-batch decoding honors dividers",
+      "name": "test_tscheck_packet_decoder.py (5 tests)",
+      "lane": "backend",
+      "status": "passed",
+      "evidence": "Hand-built synthetic little-endian 7207 index and 7208 level-1 option packets decoded via lib.kotak_feed.decode_packet(): token/ltp/change_pct honor the supplied nse_fo divider (raw 2_500_000 / divider 100 -> ltp 25000.0; raw 123450/100 -> ltp 1234.5, change 500/100 -> 5.0); default divider of 100 applied when exchange unmapped; packet_frames() correctly splits two concatenated packets in one frame and drops a truncated trailing declared-length packet without crashing."
+    },
+    {
+      "criterion": "Dashboard never silently falls back to DEMO in LIVE mode",
+      "name": "test_tscheck_dashboard_market_closed_truthful.py::test_dashboard_reports_kotak_neo_market_closed_with_empty_chain_before_ticks",
+      "lane": "backend",
+      "status": "failed",
+      "evidence": "source=KOTAK_NEO, state=MARKET_CLOSED, spot.ltp=0, option_chain=[] all correct, but feed.last_tick is fabricated to 'now' when feed-status.last_tick is null -- see bugs[0]."
+    },
+    {
+      "criterion": "After-hours UI is truthful",
+      "name": "after-hours-ui-truthful",
+      "lane": "browser",
+      "status": "passed",
+      "evidence": "mode-pill='LIVE'; banner-status-label='MARKET CLOSED'; ticker-spot-price='—' with 'Waiting for first Kotak tick'; pcr-gauge-value='—'; max-pain-value='—'; signal-engine-status='WAITING' (signal-recommendation-badge stays neutral 'WAIT'); option-chain-footnote explains the 09:15-15:30 IST session is closed without claiming a live snapshot."
+    },
+    {
+      "criterion": "ATM and expiry alert surfaces are integrated",
+      "name": "feed-alerts-surface-contract",
+      "lane": "browser",
+      "status": "passed",
+      "evidence": "GET /api/market-data/feed-status alerts[] validated as typed (ATM_SHIFT/EXPIRY_DAY/NEAR_CLOSE/ROLL_REQUIRED), id-deduplicated, with title/message/created_at; no alerts currently exist (market closed, no real ATM/expiry transition), and the UI correctly renders no feed-alert-banner in that state per spec_deviations (dedup/contract verified, not an invented market event); no order-placement affordance found near the alert surface."
+    },
+    {
+      "criterion": "Existing dashboard functionality remains intact",
+      "name": "dashboard-shell-intact-live-mode",
+      "lane": "browser",
+      "status": "passed",
+      "evidence": "app-shell, option-chain-container, market-structure-card, signal-engine-card, claude-analyst-card, kotak-vault-card all rendered; BANKNIFTY/FINNIFTY selectors disabled while mode-pill=LIVE, NIFTY selector enabled; Kotak connect modal opened/closed; DEMO safeguard dialog opened/cancelled; no console errors."
+    }
+  ],
+  "notes": "Ran against localhost:8001 for backend pytest (16 tests across 4 new files + 2 pre-existing AI files) and against the public ingress https://kotak-neo-options.preview.emergentagent.com for all 3 browser checks (APP_URL from backend/.env). Exactly 8 acceptance criteria; each got a browser and/or backend artifact per the API-backed-UI-criterion rule (5 backend test files, 3 browser checks = 8 artifacts covering 8 criteria, with 1 criterion — dashboard-never-fake-DEMO — additionally covered implicitly by the after-hours-ui-truthful browser check since the UI reads the same buggy feed.last_tick field but tolerates it via the 'as of' timestamp path). The single failure (fabricated feed.last_tick in the dashboard endpoint's waiting_live_snapshot()) was reproduced 3x across independent pytest runs at different timestamps -- not flaky, real bug in backend/routers/dashboard.py + models/dashboard.py's non-optional FeedHealth.last_tick. All backend restarts during this iteration were caused by the dev server's own WatchFiles reload picking up newly-created test files (transient expiry=null observed once immediately after a reload, then confirmed passing on rerun -- correctly excluded from bug classification)."
+}

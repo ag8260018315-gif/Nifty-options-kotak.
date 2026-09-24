@@ -1,0 +1,67 @@
+{
+  "iteration": 3,
+  "passed": 8,
+  "failed": 0,
+  "bugs": [],
+  "action_items": [],
+  "retest_needed": false,
+  "checks": [
+    {
+      "criterion": "Kotak authenticated session restores without repeated after-hours logins",
+      "name": "test_tscheck_kotak_session_persists.py",
+      "lane": "backend",
+      "status": "passed",
+      "evidence": "Re-ran full backend suite: 16/16 passed in 36.15s (pytest -q). This file's test asserts GET /api/auth/status stays mode=LIVE/configured=true/connected=true across polls with no new tradeApiLogin calls."
+    },
+    {
+      "criterion": "Current SFeed worker respects market hours and auto-start contract",
+      "name": "test_tscheck_feed_market_hours_contract.py",
+      "lane": "backend",
+      "status": "passed",
+      "evidence": "Part of the 16/16 passing backend suite rerun; GET /api/market-data/feed-status -> state=MARKET_CLOSED, connected=false, authenticated=false, last_tick=null, no credential markers in body."
+    },
+    {
+      "criterion": "Current NIFTY contract discovery is ready",
+      "name": "test_tscheck_nifty_contract_discovery.py",
+      "lane": "backend",
+      "status": "passed",
+      "evidence": "Part of the 16/16 passing backend suite rerun; feed-status/dashboard expose expiry=2026-09-29 with no baseurl/feedurl/sid/access_token/totp_secret/consumer_secret/mpin markers."
+    },
+    {
+      "criterion": "7207 and 7208 native-batch decoding honors dividers",
+      "name": "test_tscheck_packet_decoder.py",
+      "lane": "backend",
+      "status": "passed",
+      "evidence": "Part of the 16/16 passing backend suite rerun; synthetic 7207/7208 packets decode token/ltp/change_pct honoring exchange divider; concatenated-packet framing verified."
+    },
+    {
+      "criterion": "Dashboard never silently falls back to DEMO in LIVE mode",
+      "name": "test_tscheck_dashboard_market_closed_truthful.py::test_dashboard_reports_kotak_neo_market_closed_with_empty_chain_before_ticks",
+      "lane": "backend",
+      "status": "passed",
+      "evidence": "Isolated rerun: 'pytest tests/test_tscheck_dashboard_market_closed_truthful.py -v' -> 1 passed in 0.63s. Previously (iteration_2) failed because dashboard.py's waiting_live_snapshot() fabricated feed.last_tick=now() when no real tick existed; seed_facts confirm this was fixed (feed.last_tick / spot.timestamp / signal.timestamp now return null with no real packet). Bug closed."
+    },
+    {
+      "criterion": "After-hours UI is truthful",
+      "name": "after-hours-ui-truthful",
+      "lane": "browser",
+      "status": "passed",
+      "evidence": "Re-ran persisted check by name -> PASSED. mode-pill=LIVE, banner=MARKET CLOSED, spot/PCR/max-pain show dash/waiting states, signal engine=WAITING, option-chain footnote explains 09:15-15:30 IST closure without claiming a live snapshot."
+    },
+    {
+      "criterion": "ATM and expiry alert surfaces are integrated",
+      "name": "feed-alerts-surface-contract",
+      "lane": "browser",
+      "status": "passed",
+      "evidence": "Re-ran persisted check by name -> PASSED. feed-status alerts[] validated as typed/deduplicated with title/message/created_at; no order-placement affordance near alert surface."
+    },
+    {
+      "criterion": "Existing dashboard functionality remains intact",
+      "name": "dashboard-shell-intact-live-mode",
+      "lane": "browser",
+      "status": "passed",
+      "evidence": "Re-ran persisted check by name -> PASSED. app-shell, option-chain, market-structure, signal-engine, claude-analyst, kotak-vault all render; BANKNIFTY/FINNIFTY disabled while NIFTY-only live worker active; no console errors."
+    }
+  ],
+  "notes": "Retest of iteration_2. Probed http://localhost:8001/api/market-data/feed-status (200 OK) before running. Re-ran the full backend pytest suite (16/16 passed, 36.15s) which resolved the single prior bug (fabricated feed.last_tick in GET /api/market-data/dashboard's waiting_live_snapshot() when no real tick existed) -- confirmed independently via an isolated rerun of just that test file (1 passed in 0.63s), consistent with the seed_fact stating this was already fixed. Re-ran all 3 existing browser checks by name only (no script resent): after-hours-ui-truthful, feed-alerts-surface-contract, dashboard-shell-intact-live-mode -- all PASSED against the persisted public ingress URL. No new criteria were introduced in this briefing, so no new artifacts were created. All 8 acceptance criteria now pass with 0 open bugs and 0 action items."
+}

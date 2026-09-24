@@ -23,6 +23,10 @@ INDEXES: dict[str, list[IndexModel]] = {
     "ai_messages": [IndexModel([("session_id", ASCENDING), ("created_at", DESCENDING)], name="session_created")],
     "ai_summaries": [IndexModel([("symbol", ASCENDING), ("created_at", DESCENDING)], name="symbol_created")],
     "ai_alerts": [IndexModel([("symbol", ASCENDING), ("created_at", DESCENDING)], name="symbol_created")],
+    "feed_alerts": [
+        IndexModel([("id", ASCENDING)], name="id", unique=True),
+        IndexModel([("created_at", DESCENDING)], name="created_at_desc"),
+    ],
 }
 
 
