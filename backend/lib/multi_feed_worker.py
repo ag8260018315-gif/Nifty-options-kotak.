@@ -117,6 +117,7 @@ class MultiIndexFeedWorker:
         self.alert_settings = AlertSettings()
         self.opening_report: OpeningReport | None = None
         self.error_message = "Waiting for Kotak SFeed"
+        logger.info("FEED_WORKER_START_SFE event=startup symbols=%s mode=%s live_configured=%s", list(LIVE_SYMBOLS), settings.mode, getattr(settings, "live_configured", False))
 
     def state_for(self, symbol: str) -> str:
         if settings.mode != "LIVE":
@@ -127,6 +128,7 @@ class MultiIndexFeedWorker:
             return "EXPIRED"
         last_tick = self.runtimes[symbol].last_tick
         if not last_tick or (datetime.now(UTC) - last_tick).total_seconds() > 5:
+            logger.warning("FEED_WORKER_STALE symbol=%s last_tick=%s age_seconds=%.1f", symbol, last_tick.isoformat() if last_tick else None, (datetime.now(UTC) - last_tick).total_seconds() if last_tick else float("inf"))
             return "STALE"
         return "LIVE"
 
@@ -192,6 +194,7 @@ class MultiIndexFeedWorker:
         return self.alert_settings
 
     async def run(self) -> None:
+        logger.info("FEED_WORKER_START_SFE event=run_start mode=%s live_configured=%s", settings.mode, bool(getattr(settings, "live_configured", False)))
         await self._restore_state()
         if settings.mode != "LIVE" or not settings.live_configured:
             return
@@ -199,6 +202,7 @@ class MultiIndexFeedWorker:
         while True:
             try:
                 session = await kotak_client.ensure_session()
+                logger.info("FEED_WORKER_SESSION_READY event=session_ready connected=%s", kotak_client.connected)
                 for symbol, runtime in self.runtimes.items():
                     active = await instrument_repository.active_contracts(symbol)
                     expiry = min(contract.expiry for contract in active)
@@ -211,6 +215,7 @@ class MultiIndexFeedWorker:
                     self.authenticated = False
                     self.subscription_count = 0
                     self.error_message = "NSE market is closed; SFeed will start automatically at 09:15 IST"
+                    logger.warning("FEED_WORKER_SFE_ERROR event=disconnect reason=market_closed")
                     delay = 1.0
                     await asyncio.sleep(30)
                     continue
@@ -223,6 +228,7 @@ class MultiIndexFeedWorker:
                         initial_options.extend(f"nse_fo|{contract.token}" for contract in selected)
                 self.feed = KotakSFeed(session, self._on_message)
                 self.error_message = "Connecting to Kotak SFeed"
+                logger.info("FEED_WORKER_READY event=feed_start option_subscriptions=%s", len(initial_options))
                 await self.feed.run_once(list(INDEX_SUBSCRIPTIONS.values()), initial_options)
                 delay = 1.0
             except asyncio.CancelledError:
@@ -231,12 +237,14 @@ class MultiIndexFeedWorker:
                 self.error_message = "Kotak SFeed authentication expired; re-login scheduled"
                 self.authenticated = False
                 self.socket_connected = False
+                logger.warning("FEED_WORKER_SFE_ERROR event=feed_auth_error")
                 kotak_client.clear_session()
                 await db.kotak_sessions.update_one({"_id": "current"}, {"$set": {"expires_at": 0}})
             except Exception as exc:
                 self.error_message = f"Kotak SFeed reconnecting after {type(exc).__name__}"
                 self.socket_connected = False
                 self.authenticated = False
+                logger.warning("FEED_WORKER_SFE_ERROR event=feed_error kind=%s", type(exc).__name__)
             await asyncio.sleep(delay + random.random())
             delay = min(delay * 2, 30)
 
@@ -250,6 +258,7 @@ class MultiIndexFeedWorker:
             return
         if message_type == "ready":
             self.subscription_count = int(message.get("subscriptions", 0))
+            logger.info("FEED_WORKER_READY event=ready subscriptions=%s", self.subscription_count)
             return
         if message_type != "tick":
             return
@@ -261,6 +270,8 @@ class MultiIndexFeedWorker:
             runtime = self.runtimes[symbol]
             runtime.index_tick = tick
             runtime.last_tick = datetime.now(UTC)
+            if symbol == "NIFTY":
+                logger.info("FEED_WORKER_FIRST_INDEX_TICK symbol=%s ltp=%.2f", symbol, float(tick.get("ltp", 0)))
             await self._shift_atm_if_needed(symbol, float(tick.get("ltp", 0)))
             await self._publish_snapshot(symbol)
             await self._check_timed_alerts(symbol)
@@ -270,6 +281,7 @@ class MultiIndexFeedWorker:
                 if token in runtime.contracts:
                     runtime.option_ticks[token] = tick
                     runtime.oi_baseline.setdefault(token, int(tick.get("oi", 0)))
+                    logger.info("FEED_WORKER_FIRST_OPTION_TICK symbol=%s token=%s", symbol, token)
                     await self._publish_snapshot(symbol)
                     break
         await self._maybe_opening_report()
@@ -371,6 +383,7 @@ class MultiIndexFeedWorker:
         )
         runtime.snapshot = snapshot
         await db.market_snapshots.replace_one({"_id": symbol}, {"_id": symbol, **snapshot.model_dump()}, upsert=True)
+        logger.info("FEED_WORKER_SNAPSHOT_WRITTEN symbol=%s rows=%s pcr=%.2f", symbol, len(rows), pcr)
         if runtime.last_history_at is None or (runtime.last_tick - runtime.last_history_at).total_seconds() >= 5:
             local_day = runtime.last_tick.astimezone(IST).date().isoformat()
             await db.market_snapshot_history.insert_one(
