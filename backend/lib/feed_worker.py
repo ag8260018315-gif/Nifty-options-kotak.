@@ -350,4 +350,7 @@ class LiveFeedWorker:
                 continue
 
 
-feed_worker = LiveFeedWorker()
+from lib.multi_feed_worker import MultiIndexFeedWorker
+
+
+feed_worker = MultiIndexFeedWorker()

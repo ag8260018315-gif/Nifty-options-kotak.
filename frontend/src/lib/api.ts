@@ -85,3 +85,14 @@ export async function apiStream(
     if (done) break;
   }
 }
+
+export async function apiDownload(path: string): Promise<{ blob: Blob; filename: string }> {
+  const res = await fetch(`${BASE}${path}`);
+  if (!res.ok) {
+    const errBody = await res.json().catch(() => null);
+    throw new ApiError(res.status, errBody);
+  }
+  const disposition = res.headers.get("Content-Disposition") ?? "";
+  const match = disposition.match(/filename="?([^";]+)"?/i);
+  return { blob: await res.blob(), filename: match?.[1] ?? "kotak-live-export.csv" };
+}

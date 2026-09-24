@@ -1,0 +1,102 @@
+{
+  "iteration": 4,
+  "passed": 13,
+  "failed": 0,
+  "bugs": [],
+  "action_items": [],
+  "retest_needed": false,
+  "checks": [
+    {
+      "criterion": "All three Kotak indices are represented by the live worker",
+      "name": "test_tscheck_feed_status_three_indices.py",
+      "lane": "backend",
+      "status": "passed",
+      "evidence": "GET /api/market-data/feed-status -> 200; indices set == {NIFTY,BANKNIFTY,FINNIFTY}, each with master-derived expiry 2026-09-29 and expected_pairs=21, state MARKET_CLOSED (truthful, matches NSE closed), and no baseurl/feedurl/\"sid\"/access_token/totp_secret/consumer_secret/mpin/password markers in body."
+    },
+    {
+      "criterion": "Live or last-verified dashboard data is visible for every selector",
+      "name": "test_tscheck_dashboard_per_index_truthful.py",
+      "lane": "backend",
+      "status": "passed",
+      "evidence": "GET /api/market-data/dashboard?symbol=NIFTY|BANKNIFTY -> 200, feed.source=KOTAK_NEO, last_tick present, spot.ltp>0, option_chain>=21 rows (last verified 2026-09-24 snapshot). GET ?symbol=FINNIFTY -> 200, feed.source=KOTAK_NEO, last_tick=null, spot.timestamp=null, option_chain=[] (truthful waiting state, never DEMO)."
+    },
+    {
+      "criterion": "Current-day CSV export works for verified live data",
+      "name": "test_tscheck_csv_export_verified_indices.py",
+      "lane": "backend",
+      "status": "passed",
+      "evidence": "GET /api/market-data/export.csv?symbol=NIFTY|BANKNIFTY -> 200 text/csv, attachment filename '<SYM>-2026-09-24-kotak-live.csv', 21 CE/PE data rows each with index/source columns matching KOTAK_NEO, cache-control no-store, x-content-type-options nosniff."
+    },
+    {
+      "criterion": "Unverified FINNIFTY data cannot be exported",
+      "name": "test_tscheck_finnifty_export_blocked.py",
+      "lane": "backend",
+      "status": "passed",
+      "evidence": "GET /api/market-data/export.csv?symbol=FINNIFTY -> 404 {\"detail\":\"No verified Kotak live data is available for this index today\"}."
+    },
+    {
+      "criterion": "CSV export is allow-listed and safe",
+      "name": "test_tscheck_csv_export_verified_indices.py::test_export_rejects_invalid_symbol",
+      "lane": "backend",
+      "status": "passed",
+      "evidence": "GET /api/market-data/export.csv?symbol=NOTREAL -> 422 (FastAPI enum validation). NIFTY/BANKNIFTY CSVs checked column-by-column against the exact CSV_COLUMNS allow-list and scanned for baseurl/feedurl/sid/access_token/totp_secret/consumer_secret/mpin/password/raw_packet markers -- none found."
+    },
+    {
+      "criterion": "Browser export flow downloads a usable file",
+      "name": "csv-export-nifty-download",
+      "lane": "browser",
+      "status": "passed",
+      "evidence": "Selected NIFTY -> Export CSV enabled -> click triggered a real download named NIFTY-YYYY-MM-DD-kotak-live.csv with >=2 lines and spot_ltp column, plus a 'CSV exported' success toast."
+    },
+    {
+      "criterion": "Browser export flow downloads a usable file (FINNIFTY closed, no console/failed-request errors)",
+      "name": "finnifty-market-closed-export-disabled",
+      "lane": "browser",
+      "status": "passed",
+      "evidence": "Switched to FINNIFTY -> MARKET CLOSED banner visible, Export CSV button disabled, export-status-message shown; forcing a click on the disabled control produced no failing export.csv network request."
+    },
+    {
+      "criterion": "Daily history capture is bounded and truthful",
+      "name": "test_tscheck_history_capture_bounded.py",
+      "lane": "backend",
+      "status": "passed",
+      "evidence": "NIFTY export CSV rows all share trading_day=current IST date and source=KOTAK_NEO; distinct captured_at values (currently a single last-verified snapshot) checked pairwise >=5s apart -- satisfied trivially/by construction."
+    },
+    {
+      "criterion": "Existing dashboard functionality remains intact",
+      "name": "dashboard-shell-intact-live-mode",
+      "lane": "browser",
+      "status": "passed",
+      "evidence": "Updated for the new all-three-live spec: app-shell/option-chain/market-structure/signal-engine/claude-analyst/kotak-vault render; NIFTY/BANKNIFTY/FINNIFTY selectors all enabled (was NIFTY-only in prior iteration); Kotak modal + DEMO safeguard dialog open/close correctly; 0 console errors."
+    },
+    {
+      "criterion": "Existing dashboard functionality remains intact (index switching + PCR/max-pain/signal/option ladder)",
+      "name": "dashboard-options-functional",
+      "lane": "browser",
+      "status": "passed",
+      "evidence": "Updated: BANKNIFTY selection shows real last-verified spot/PCR/max-pain/signal + option rows; FINNIFTY (unverified) truthfully shows dash spot instead of fabricated values; Kotak modal and DEMO dialog still function."
+    },
+    {
+      "criterion": "Existing dashboard functionality remains intact (after-hours truthfulness across indices)",
+      "name": "after-hours-ui-truthful",
+      "lane": "browser",
+      "status": "passed",
+      "evidence": "Updated: NIFTY shows non-dash last-verified spot/PCR/max-pain while MARKET CLOSED; switching to FINNIFTY shows dash spot and a footnote explaining the closed/waiting state -- no cross-index fabrication."
+    },
+    {
+      "criterion": "Existing dashboard functionality remains intact (alert surfaces, AI analyst mode-correctness)",
+      "name": "feed-alerts-surface-contract / ai-explain-signal-streams / ai-daily-summary-streams / ai-chat-interactive-question / ai-ce-pe-alert-toast",
+      "lane": "browser",
+      "status": "passed",
+      "evidence": "feed-alerts-surface-contract passed unchanged. ai-explain-signal-streams updated (server is authenticated LIVE per seed_facts, so it now asserts a real streamed analysis and absence of claude-demo-badge instead of the stale DEMO-mode assumption); ai-daily-summary-streams, ai-chat-interactive-question, ai-ce-pe-alert-toast re-ran unchanged and passed."
+    },
+    {
+      "criterion": "Existing dashboard functionality remains intact (explicit DEMO safeguards)",
+      "name": "demo-mode-safety-labels",
+      "lane": "browser",
+      "status": "passed",
+      "evidence": "Updated: since KOTAK_MODE is LIVE/authenticated (seed_facts), mode-pill/mobile-mode-pill truthfully read LIVE; the DEMO safeguard dialog (never-mislabel-simulated-as-live warning, no-orders warning, compliance disclaimer) still renders and cancels correctly."
+    }
+  ],
+  "notes": "New briefing introduced a materially different spec vs iteration_3: FINNIFTY is now enabled (previously disabled/NIFTY-only), NIFTY/BANKNIFTY now show LAST VERIFIED real snapshots while MARKET_CLOSED (previously required null/zeroed placeholders), and new CSV export functionality was added. Probed http://localhost:8001/api/market-data/feed-status (200) before testing. Ran full backend pytest suite: 25/25 passed (21 pre-existing + 4 new test files for this iteration's criteria: feed_status_three_indices, dashboard_per_index_truthful, csv_export_verified_indices, finnifty_export_blocked, history_capture_bounded -- 5 new files, one merged). Two pre-existing backend test files (test_tscheck_feed_market_hours_contract.py, test_tscheck_dashboard_market_closed_truthful.py) asserted the OLD contract (last_tick must always be null when closed / spot must be 0) which the new briefing's seed_facts explicitly supersede (NIFTY/BANKNIFTY now truthfully show last-verified real data) -- updated in place to assert the new truthful-last-verified contract rather than treating this as a bug, since it is a documented spec evolution, not a regression. Six pre-existing browser checks (dashboard-shell-intact-live-mode, dashboard-options-functional, after-hours-ui-truthful, demo-mode-safety-labels, ai-explain-signal-streams) initially failed on rerun for the same reason (BANKNIFTY/FINNIFTY selector disabled assumption, dash-placeholder assumption, and a stale global-DEMO-mode assumption that no longer matches the always-LIVE-authenticated environment) -- all updated in place to match the current truthful spec and verified passing; feed-alerts-surface-contract, ai-daily-summary-streams, ai-chat-interactive-question, ai-ce-pe-alert-toast re-ran unchanged and passed. Two new browser checks added: csv-export-nifty-download (real file download + success toast) and finnifty-market-closed-export-disabled (disabled export button, no failing network request). 12 acceptance criteria items covered across 13 checks (one criterion split across two artifacts for browser+backend coverage); 0 open bugs, 0 action items."
+}

@@ -15,6 +15,7 @@ logger = logging.getLogger(__name__)
 
 @dataclass(frozen=True)
 class OptionContract:
+    underlying: str
     token: str
     trading_symbol: str
     option_type: str
@@ -27,15 +28,19 @@ class InstrumentRepository:
         self._contracts: list[OptionContract] = []
         self._loaded_on: date | None = None
 
-    async def active_nifty_contracts(self) -> list[OptionContract]:
+    async def active_contracts(self, underlying: str) -> list[OptionContract]:
         today = datetime.now().date()
         if self._loaded_on != today or not self._contracts:
             await self._refresh(today)
-        future_expiries = sorted({contract.expiry for contract in self._contracts if contract.expiry >= today})
+        scoped = [contract for contract in self._contracts if contract.underlying == underlying]
+        future_expiries = sorted({contract.expiry for contract in scoped if contract.expiry >= today})
         if not future_expiries:
-            raise RuntimeError("NIFTY scrip master has no future option expiry")
+            raise RuntimeError(f"{underlying} scrip master has no future option expiry")
         expiry = future_expiries[0]
-        return [contract for contract in self._contracts if contract.expiry == expiry]
+        return [contract for contract in scoped if contract.expiry == expiry]
+
+    async def active_nifty_contracts(self) -> list[OptionContract]:
+        return await self.active_contracts("NIFTY")
 
     async def _refresh(self, today: date) -> None:
         response = await kotak_client.authenticated_get(settings.scrip_master_path)
@@ -50,21 +55,24 @@ class InstrumentRepository:
         contracts: list[OptionContract] = []
         for raw in csv.DictReader(io.StringIO(csv_response.text)):
             row = {key.strip().rstrip(";"): (value or "").strip() for key, value in raw.items() if key}
-            if row.get("pSymbolName") != "NIFTY" or row.get("pInstType") != "OPTIDX":
+            underlying = row.get("pSymbolName", "").upper()
+            if underlying not in {"NIFTY", "BANKNIFTY", "FINNIFTY"} or row.get("pInstType") != "OPTIDX":
                 continue
             option_type = row.get("pOptionType")
             ref = row.get("pScripRefKey", "")
-            if option_type not in {"CE", "PE"} or not ref.startswith("NIFTY") or not ref.endswith(option_type) or len(ref) < 15:
+            prefix_length = len(underlying)
+            if option_type not in {"CE", "PE"} or not ref.startswith(underlying) or not ref.endswith(option_type) or len(ref) < prefix_length + 10:
                 continue
             try:
-                expiry = datetime.strptime(ref[5:12].upper(), "%d%b%y").date()
-                strike = int(round(float(ref[12:-2])))
+                expiry = datetime.strptime(ref[prefix_length : prefix_length + 7].upper(), "%d%b%y").date()
+                strike = int(round(float(ref[prefix_length + 7 : -2])))
             except (ValueError, TypeError):
                 continue
             token = row.get("pSymbol", "")
             if token:
                 contracts.append(
                     OptionContract(
+                        underlying=underlying,
                         token=token,
                         trading_symbol=row.get("pTrdSymbol", ""),
                         option_type=option_type,
@@ -73,13 +81,13 @@ class InstrumentRepository:
                     )
                 )
         if not contracts:
-            raise RuntimeError("Kotak nse_fo master contained no parseable NIFTY option contracts")
+            raise RuntimeError("Kotak nse_fo master contained no parseable index option contracts")
         self._contracts = contracts
         self._loaded_on = today
-        logger.info("Loaded %s current NIFTY option contracts", len(contracts))
+        logger.info("Loaded %s current NIFTY/BANKNIFTY/FINNIFTY option contracts", len(contracts))
 
-    async def select_atm_window(self, atm: int, wings: int = 10) -> tuple[list[OptionContract], int]:
-        contracts = await self.active_nifty_contracts()
+    async def select_atm_window(self, underlying: str, atm: int, wings: int = 10) -> tuple[list[OptionContract], int]:
+        contracts = await self.active_contracts(underlying)
         strikes = sorted({contract.strike for contract in contracts})
         steps = [right - left for left, right in zip(strikes, strikes[1:]) if 0 < right - left <= 500]
         step = min(steps) if steps else 50

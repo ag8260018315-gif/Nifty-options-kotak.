@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Activity, ArrowUpRight, Bell, Bot, Check, ChevronDown, CircleHelp, Cloud, FileText, Gauge, KeyRound, LockKeyhole, MessageSquare, RefreshCw, Send, ShieldCheck, Sparkles, Wifi } from "lucide-react";
+import { Activity, ArrowUpRight, Bell, Bot, Check, ChevronDown, CircleHelp, Cloud, Download, FileText, Gauge, KeyRound, LockKeyhole, MessageSquare, RefreshCw, Save, Send, Settings2, ShieldCheck, Sparkles, Sunrise, Wifi } from "lucide-react";
 import { toast } from "sonner";
 
 import { Badge } from "@/components/ui/badge";
@@ -9,7 +9,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Toaster } from "@/components/ui/sonner";
 import { Textarea } from "@/components/ui/textarea";
-import { apiGet, apiPost, apiStream } from "@/lib/api";
+import { apiDownload, apiGet, apiPost, apiPut, apiStream } from "@/lib/api";
 
 type IndexSymbol = "NIFTY" | "BANKNIFTY" | "FINNIFTY";
 type MarketState = "LIVE" | "STALE" | "EXPIRED" | "MARKET_CLOSED" | "DISCONNECTED" | "DEMO";
@@ -85,7 +85,7 @@ interface AuthStatus {
   message: string;
 }
 
-type FeedAlertType = "ATM_SHIFT" | "EXPIRY_DAY" | "NEAR_CLOSE" | "ROLL_REQUIRED";
+type FeedAlertType = "ATM_SHIFT" | "EXPIRY_DAY" | "NEAR_CLOSE" | "ROLL_REQUIRED" | "OPENING_REPORT";
 
 interface FeedAlert {
   id: string;
@@ -93,6 +93,43 @@ interface FeedAlert {
   title: string;
   message: string;
   created_at: string;
+  symbol: IndexSymbol | null;
+}
+
+interface AlertSettings {
+  atm_shift_steps: number;
+  cooldown_seconds: number;
+  quiet_start: string;
+  quiet_end: string;
+}
+
+interface IndexFeedStatus {
+  symbol: IndexSymbol;
+  state: Exclude<MarketState, "DISCONNECTED">;
+  last_tick: string | null;
+  atm_strike: number | null;
+  expiry: string | null;
+  option_subscriptions: number;
+  paired_strikes: number;
+  expected_pairs: number;
+}
+
+interface OpeningIndexHealth {
+  symbol: IndexSymbol;
+  fresh_spot: boolean;
+  divider_verified: boolean;
+  option_window_complete: boolean;
+  paired_ce_pe_complete: boolean;
+  socket_connected: boolean;
+  option_subscriptions: number;
+  paired_strikes: number;
+}
+
+interface OpeningReport {
+  session_date: string;
+  generated_at: string;
+  status: "PASS" | "WARN";
+  indices: OpeningIndexHealth[];
 }
 
 interface FeedStatus {
@@ -106,6 +143,9 @@ interface FeedStatus {
   expiry: string | null;
   message: string;
   alerts: FeedAlert[];
+  indices: IndexFeedStatus[];
+  opening_report: OpeningReport | null;
+  alert_settings: AlertSettings;
 }
 
 type AiAction = "explain" | "chat" | "summary" | "alert";
@@ -186,8 +226,13 @@ export default function Home() {
   const [aiAction, setAiAction] = useState<AiAction>("explain");
   const [chatQuestion, setChatQuestion] = useState("");
   const [aiSessionId] = useState(() => window.crypto.randomUUID());
+  const [atmShiftSteps, setAtmShiftSteps] = useState(1);
+  const [cooldownSeconds, setCooldownSeconds] = useState(60);
+  const [quietStart, setQuietStart] = useState("15:30");
+  const [quietEnd, setQuietEnd] = useState("09:15");
   const seenFeedAlerts = useRef<Set<string>>(new Set());
   const alertsInitialized = useRef(false);
+  const alertSettingsInitialized = useRef(false);
 
   const dashboardQuery = useQuery({
     queryKey: ["dashboard", symbol],
@@ -216,6 +261,16 @@ export default function Home() {
     }
   }, [feedStatusQuery.data?.alerts]);
 
+  useEffect(() => {
+    const current = feedStatusQuery.data?.alert_settings;
+    if (!current || alertSettingsInitialized.current) return;
+    setAtmShiftSteps(current.atm_shift_steps);
+    setCooldownSeconds(current.cooldown_seconds);
+    setQuietStart(current.quiet_start);
+    setQuietEnd(current.quiet_end);
+    alertSettingsInitialized.current = true;
+  }, [feedStatusQuery.data?.alert_settings]);
+
   const demoMutation = useMutation({
     mutationFn: () => apiPost<AuthStatus>("/auth/demo", { confirm: true }),
     onSuccess: async () => {
@@ -234,6 +289,31 @@ export default function Home() {
       toast.success("Kotak connection updated");
     },
     onError: () => toast.info("Credentials are not configured yet", { description: "Add them only to backend/.env, then retry this check." }),
+  });
+
+  const alertSettingsMutation = useMutation({
+    mutationFn: (request: AlertSettings) => apiPut<AlertSettings>("/market-data/alert-settings", request),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["feed-status"] });
+      toast.success("Alert controls saved");
+    },
+    onError: () => toast.error("Alert controls could not be saved"),
+  });
+
+  const exportMutation = useMutation({
+    mutationFn: () => apiDownload(`/market-data/export.csv?symbol=${symbol}`),
+    onSuccess: ({ blob, filename }) => {
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = filename;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      URL.revokeObjectURL(url);
+      toast.success(`${symbol} CSV exported`, { description: "Verified Kotak snapshots from the current trading day." });
+    },
+    onError: () => toast.error("No verified live data is available to export yet"),
   });
 
   const aiMutation = useMutation({
@@ -272,18 +352,23 @@ export default function Home() {
   };
 
   const data = dashboardQuery.data;
-  const feedState = (feedStatusQuery.data?.state ?? data?.feed.state ?? (authQuery.data?.state === "LIVE" ? "STALE" : authQuery.data?.state ?? "DEMO")) as MarketState;
   const modeLabel = authQuery.data?.mode ?? "DEMO";
+  const selectedIndexFeed = feedStatusQuery.data?.indices.find((item) => item.symbol === symbol);
+  const feedState = (selectedIndexFeed?.state ?? feedStatusQuery.data?.state ?? data?.feed.state ?? (authQuery.data?.state === "LIVE" ? "STALE" : authQuery.data?.state ?? "DEMO")) as MarketState;
   const visibleRows = useMemo(() => {
     if (!data) return [];
-    return data.option_chain.filter((row) => Math.abs(row.strike - data.structure.max_pain) <= Number(range) * 50);
+    const width = Number(range);
+    const atmIndex = data.option_chain.findIndex((row) => row.is_atm);
+    if (atmIndex < 0) return data.option_chain.slice(0, width * 2 + 1);
+    return data.option_chain.slice(Math.max(0, atmIndex - width), atmIndex + width + 1);
   }, [data, range]);
   const authMessage = authQuery.data?.message ?? "Checking the server-side Kotak configuration…";
-  const lastTickValue = feedStatusQuery.data ? feedStatusQuery.data.last_tick : data?.feed.last_tick;
+  const lastTickValue = selectedIndexFeed?.last_tick ?? (feedStatusQuery.data ? null : data?.feed.last_tick);
   const lastTick = lastTickValue ? new Date(lastTickValue).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", second: "2-digit" }) : "—";
-  const latestFeedAlert = feedStatusQuery.data?.alerts[0];
-  const hasMarketTick = data?.feed.source === "DEMO" || Boolean(feedStatusQuery.data?.last_tick);
+  const latestFeedAlert = feedStatusQuery.data?.alerts.find((alert) => alert.symbol === null || alert.symbol === symbol);
+  const hasMarketTick = data?.feed.source === "DEMO" || Boolean(selectedIndexFeed?.last_tick);
   const hasChainData = visibleRows.length > 0;
+  const canExport = Boolean(data?.feed.source === "KOTAK_NEO" && data.feed.last_tick && data.option_chain.length >= 21);
 
   return (
     <div data-testid="app-shell" className="min-h-svh bg-[#07090e] text-slate-100">
@@ -307,7 +392,7 @@ export default function Home() {
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
             <nav data-testid="index-selector" className="flex items-center gap-1 rounded-lg border border-[#202b42] bg-[#0e131d] p-1">
               {SYMBOLS.map((item) => (
-                <button key={item} data-testid={`index-selector-${item.toLowerCase()}`} type="button" onClick={() => setSymbol(item)} disabled={modeLabel === "LIVE" && item !== "NIFTY"} title={modeLabel === "LIVE" && item !== "NIFTY" ? "First live SFeed worker supports NIFTY only" : item} className={`data-hover rounded-md px-3 py-2 text-[11px] font-semibold tracking-wide disabled:cursor-not-allowed disabled:opacity-35 ${symbol === item ? "bg-[#1f2a41] text-white shadow-inner" : "text-slate-500 hover:text-slate-200"}`}>
+                <button key={item} data-testid={`index-selector-${item.toLowerCase()}`} type="button" onClick={() => setSymbol(item)} className={`data-hover rounded-md px-3 py-2 text-[11px] font-semibold tracking-wide ${symbol === item ? "bg-[#1f2a41] text-white shadow-inner" : "text-slate-500 hover:text-slate-200"}`}>
                   {item}
                 </button>
               ))}
@@ -341,6 +426,13 @@ export default function Home() {
 
         {latestFeedAlert && <section data-testid="feed-alert-banner" className="flex flex-col gap-2 rounded-lg border border-amber-500/25 bg-amber-500/5 px-4 py-3 sm:flex-row sm:items-center sm:justify-between"><div className="flex items-start gap-2.5"><Bell data-testid="feed-alert-icon" className="mt-0.5 size-4 shrink-0 text-amber-300" /><div><p data-testid="feed-alert-title" className="text-xs font-semibold text-amber-200">{latestFeedAlert.title}</p><p data-testid="feed-alert-message" className="mt-0.5 text-[11px] text-amber-100/60">{latestFeedAlert.message}</p></div></div><Badge data-testid="feed-alert-type" className="self-start border-amber-500/25 bg-amber-500/10 text-[9px] text-amber-300 sm:self-auto">{latestFeedAlert.type.replaceAll("_", " ")}</Badge></section>}
 
+        <section data-testid="opening-bell-report" className="rounded-xl border border-[#202b42] bg-[#0e131d]/90 px-4 py-3">
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+            <div className="flex items-center gap-3"><div data-testid="opening-bell-icon" className="flex size-9 items-center justify-center rounded-lg bg-amber-500/10 text-amber-300"><Sunrise className="size-4" /></div><div><p data-testid="opening-bell-title" className="text-sm font-semibold text-slate-200">09:16 opening bell check</p><p data-testid="opening-bell-subtitle" className="mt-0.5 text-[11px] text-slate-500">Fresh spot · divider · ATM ±10 · paired CE/PE · socket</p></div></div>
+            {feedStatusQuery.data?.opening_report ? <div className="flex flex-wrap items-center gap-2"><Badge data-testid="opening-report-status" className={feedStatusQuery.data.opening_report.status === "PASS" ? "border-emerald-500/30 bg-emerald-500/10 text-[10px] text-emerald-300" : "border-amber-500/30 bg-amber-500/10 text-[10px] text-amber-300"}>{feedStatusQuery.data.opening_report.status}</Badge>{feedStatusQuery.data.opening_report.indices.map((item) => <span key={item.symbol} data-testid={`opening-report-${item.symbol.toLowerCase()}`} className="rounded-md border border-[#2a364f] bg-[#090d15] px-2.5 py-1.5 font-mono text-[10px] text-slate-400">{item.symbol} {item.fresh_spot && item.divider_verified && item.option_window_complete && item.paired_ce_pe_complete && item.socket_connected ? "✓" : "CHECK"} · {item.paired_strikes}/{21} pairs</span>)}</div> : <Badge data-testid="opening-report-status" className="border-slate-600/40 bg-slate-800/50 text-[10px] text-slate-400">SCHEDULED · 09:16 IST</Badge>}
+          </div>
+        </section>
+
         <section data-testid="market-summary-grid" className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
           <Card size="sm" className="border-[#202b42] bg-[#101621]/90 sm:col-span-2 xl:col-span-1">
             <CardContent className="p-4">
@@ -352,7 +444,7 @@ export default function Home() {
           </Card>
           <MetricCard label="Put / call ratio" value={data && hasChainData ? data.structure.pcr.toFixed(2) : "—"} detail={data?.structure.oi_buildup ?? "Awaiting option chain"} icon={Gauge} accent="text-blue-300" testId="pcr-gauge-value" />
           <MetricCard label="Max pain" value={data && hasChainData ? formatInteger(data.structure.max_pain) : "—"} detail={data && hasChainData ? `${data.structure.bias} structure bias` : "Awaiting live option ticks"} icon={Activity} accent={data?.structure.bias === "BULLISH" ? "text-emerald-300" : "text-slate-100"} testId="max-pain-value" />
-          <MetricCard label="SFeed socket health" value={feedStatusQuery.data?.connected ? "CONNECTED" : feedState} detail={feedStatusQuery.data ? `${feedStatusQuery.data.subscriptions} instruments · divider ${feedStatusQuery.data.divider_verified ? "verified" : "pending"}` : "Server feed health pending"} icon={Wifi} accent={feedStatusQuery.data?.connected ? "text-emerald-300" : "text-amber-300"} testId="feed-health-value" />
+          <MetricCard label="SFeed socket health" value={feedStatusQuery.data?.connected ? "CONNECTED" : feedState} detail={selectedIndexFeed ? `${selectedIndexFeed.option_subscriptions + 1} ${symbol} instruments · ${selectedIndexFeed.paired_strikes}/${selectedIndexFeed.expected_pairs} paired` : "Server feed health pending"} icon={Wifi} accent={feedStatusQuery.data?.connected ? "text-emerald-300" : "text-amber-300"} testId="feed-health-value" />
         </section>
 
         <section className="grid items-start gap-4 xl:grid-cols-[minmax(0,7fr)_minmax(320px,5fr)]">
@@ -361,6 +453,7 @@ export default function Home() {
               <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                 <div><CardTitle data-testid="option-chain-title" className="font-heading text-base text-slate-100">Option chain / Greeks ladder</CardTitle><p data-testid="option-chain-subtitle" className="mt-1 text-xs text-slate-500">Calls on the left · puts on the right · ATM highlighted</p></div>
                 <div className="flex items-center gap-2">
+                  <Button data-testid="export-csv-button" type="button" variant="outline" size="sm" className="border-emerald-500/25 bg-emerald-500/5 text-[11px] text-emerald-300 hover:bg-emerald-500/10" disabled={!canExport || exportMutation.isPending} title={canExport ? `Export today's verified ${symbol} snapshots` : "Available after the first verified Kotak option snapshot"} onClick={() => exportMutation.mutate()}><Download className="mr-1.5 size-3.5" />{exportMutation.isPending ? "Preparing…" : "Export CSV"}</Button>
                   <label data-testid="strike-filter-label" htmlFor="strike-filter-range" className="sr-only">Strike range</label>
                   <select id="strike-filter-range" data-testid="strike-filter-range" value={range} onChange={(event) => setRange(event.target.value)} className="rounded-md border border-[#2a364f] bg-[#111622] px-2.5 py-2 text-[11px] text-slate-300 outline-none focus:border-blue-500"><option value="3">±3 strikes</option><option value="5">±5 strikes</option><option value="10">±10 strikes</option></select>
                   <label data-testid="expiry-date-label" htmlFor="expiry-date-select" className="sr-only">Expiry</label>
@@ -369,6 +462,7 @@ export default function Home() {
               </div>
             </CardHeader>
             <CardContent className="p-0">
+              <p data-testid="export-status-message" className="border-b border-[#202b42] px-4 py-2 text-[10px] text-slate-600">{canExport ? `CSV includes all verified ${symbol} snapshots captured today` : "CSV unlocks after the first verified Kotak spot and paired CE/PE snapshot"}</p>
               <div className="overflow-x-auto">
                 <table className="w-full min-w-[880px] border-collapse text-right">
                   <thead data-testid="option-chain-table-head" className="bg-[#0e131d] text-[9px] uppercase tracking-[0.12em] text-slate-500"><tr><th colSpan={5} className="border-r border-[#202b42] px-2 py-2 text-center text-emerald-400/80">Call side</th><th rowSpan={2} className="bg-[#141c2b] px-3 py-2 text-center text-blue-300">Strike</th><th colSpan={5} className="px-2 py-2 text-center text-rose-300/80">Put side</th></tr><tr><th className="px-2 pb-2">OI chg</th><th className="px-2 pb-2">OI</th><th className="px-2 pb-2">IV</th><th className="px-2 pb-2">Delta</th><th className="border-r border-[#202b42] px-2 pb-2">LTP</th><th className="px-2 pb-2">LTP</th><th className="px-2 pb-2">Delta</th><th className="px-2 pb-2">IV</th><th className="px-2 pb-2">OI</th><th className="px-2 pb-2">OI chg</th></tr></thead>
@@ -387,6 +481,15 @@ export default function Home() {
             <Card data-testid="market-structure-card" className="border-[#202b42] bg-[#101621]/90"><CardHeader className="flex-row items-center justify-between border-b border-[#202b42] px-4 py-3"><div><CardTitle data-testid="market-structure-title" className="font-heading text-base text-slate-100">Market structure</CardTitle><p data-testid="market-structure-subtitle" className="mt-1 text-xs text-slate-500">What the chain is leaning toward</p></div><CircleHelp data-testid="market-structure-help" className="size-4 text-slate-600" /></CardHeader><CardContent className="space-y-4 p-4"><div className="flex items-center justify-between"><span data-testid="pcr-interpretation-label" className="text-xs text-slate-400">PCR interpretation</span><Badge data-testid="pcr-interpretation-badge" className="border-emerald-500/30 bg-emerald-500/10 text-[10px] text-emerald-300">{data && hasChainData ? data.structure.bias : "WAITING"}</Badge></div><div className="grid grid-cols-2 gap-3"><div className="rounded-lg border border-[#202b42] bg-[#0e131d] p-3"><p data-testid="structure-pcr-label" className="text-[10px] uppercase tracking-wider text-slate-500">PCR</p><p data-testid="structure-pcr-value" className="mt-2 font-mono text-lg font-bold text-white">{data && hasChainData ? data.structure.pcr.toFixed(2) : "—"}</p></div><div className="rounded-lg border border-[#202b42] bg-[#0e131d] p-3"><p data-testid="structure-max-pain-label" className="text-[10px] uppercase tracking-wider text-slate-500">Max pain</p><p data-testid="structure-max-pain-value" className="mt-2 font-mono text-lg font-bold text-white">{data && hasChainData ? formatInteger(data.structure.max_pain) : "—"}</p></div></div><div data-testid="oi-buildup-summary" className="rounded-lg border border-blue-500/20 bg-blue-500/5 px-3 py-3"><p data-testid="oi-buildup-label" className="text-[10px] uppercase tracking-wider text-blue-300/70">OI buildup</p><p data-testid="oi-buildup-value" className="mt-1 text-sm text-blue-100">{data?.structure.oi_buildup ?? "Waiting for option chain"}</p></div></CardContent></Card>
 
             <Card data-testid="signal-engine-card" className="signal-pulse border-emerald-500/20 bg-[#101621]/90"><CardHeader className="flex-row items-center justify-between border-b border-[#202b42] px-4 py-3"><div><CardTitle data-testid="signal-engine-title" className="font-heading text-base text-slate-100">Signal engine</CardTitle><p data-testid="signal-engine-subtitle" className="mt-1 text-xs text-slate-500">Normalized inputs · read-only guidance</p></div><Badge data-testid="signal-engine-status" className="border-emerald-500/30 bg-emerald-500/10 text-[10px] text-emerald-300">{hasChainData ? "ACTIVE" : "WAITING"}</Badge></CardHeader><CardContent className="space-y-4 p-4"><div className="flex items-end justify-between"><div><p data-testid="signal-recommendation-label" className="text-[10px] uppercase tracking-[0.16em] text-slate-500">Recommendation</p><p data-testid="signal-recommendation-badge" className="mt-1 font-heading text-xl font-bold text-emerald-300">{data?.signal.recommendation ?? "—"}</p></div><div className="text-right"><p data-testid="signal-confidence-label" className="text-[10px] uppercase tracking-wider text-slate-500">Confidence</p><p data-testid="signal-confidence-value" className="mt-1 font-mono text-lg font-bold text-white">{data ? `${data.signal.confidence}%` : "—"}</p></div></div><div data-testid="signal-confidence-meter" className="h-1.5 overflow-hidden rounded-full bg-[#202b42]"><div className="h-full rounded-full bg-emerald-400 transition-[width] duration-500" style={{ width: `${data?.signal.confidence ?? 0}%` }} /></div><ul data-testid="signal-breakdown-reasons" className="space-y-2">{(data?.signal.reasons ?? ["Waiting for normalized market inputs"]).map((reason, index) => <li key={reason} data-testid={`signal-reason-${index}`} className="flex items-start gap-2 text-xs text-slate-400"><Check className="mt-0.5 size-3.5 shrink-0 text-emerald-400" />{reason}</li>)}</ul><p data-testid="signal-timestamp" className="border-t border-[#202b42] pt-3 font-mono text-[10px] text-slate-600">Updated {data && hasChainData && data.signal.timestamp ? new Date(data.signal.timestamp).toLocaleTimeString("en-IN") : "—"} · informational only</p></CardContent></Card>
+
+            <Card data-testid="alert-controls-card" className="border-[#202b42] bg-[#101621]/90">
+              <CardHeader className="flex-row items-center justify-between border-b border-[#202b42] px-4 py-3"><div><CardTitle data-testid="alert-controls-title" className="font-heading text-base text-slate-100">Alert controls</CardTitle><p data-testid="alert-controls-subtitle" className="mt-1 text-xs text-slate-500">ATM sensitivity, cooldown, and quiet hours</p></div><Settings2 data-testid="alert-controls-icon" className="size-4 text-slate-600" /></CardHeader>
+              <CardContent className="p-4"><form data-testid="alert-controls-form" className="space-y-3" onSubmit={(event) => { event.preventDefault(); alertSettingsMutation.mutate({ atm_shift_steps: atmShiftSteps, cooldown_seconds: cooldownSeconds, quiet_start: quietStart, quiet_end: quietEnd }); }}>
+                <div className="grid grid-cols-2 gap-3"><div><label data-testid="atm-threshold-label" htmlFor="atm-threshold-select" className="text-[10px] uppercase tracking-wider text-slate-500">ATM shift</label><select id="atm-threshold-select" data-testid="atm-threshold-select" value={atmShiftSteps} onChange={(event) => setAtmShiftSteps(Number(event.target.value))} className="mt-1.5 w-full rounded-md border border-[#2a364f] bg-[#0e131d] px-2.5 py-2 text-xs text-slate-300"><option value={1}>1 full strike</option><option value={2}>2 full strikes</option><option value={3}>3 full strikes</option></select></div><div><label data-testid="alert-cooldown-label" htmlFor="alert-cooldown-input" className="text-[10px] uppercase tracking-wider text-slate-500">Cooldown seconds</label><input id="alert-cooldown-input" data-testid="alert-cooldown-input" type="number" min={0} max={3600} value={cooldownSeconds} onChange={(event) => setCooldownSeconds(Number(event.target.value))} className="mt-1.5 w-full rounded-md border border-[#2a364f] bg-[#0e131d] px-2.5 py-2 text-xs text-slate-300" /></div></div>
+                <div className="grid grid-cols-2 gap-3"><div><label data-testid="quiet-start-label" htmlFor="quiet-start-input" className="text-[10px] uppercase tracking-wider text-slate-500">Quiet from</label><input id="quiet-start-input" data-testid="quiet-start-input" type="time" value={quietStart} onChange={(event) => setQuietStart(event.target.value)} className="mt-1.5 w-full rounded-md border border-[#2a364f] bg-[#0e131d] px-2.5 py-2 text-xs text-slate-300" /></div><div><label data-testid="quiet-end-label" htmlFor="quiet-end-input" className="text-[10px] uppercase tracking-wider text-slate-500">Quiet until</label><input id="quiet-end-input" data-testid="quiet-end-input" type="time" value={quietEnd} onChange={(event) => setQuietEnd(event.target.value)} className="mt-1.5 w-full rounded-md border border-[#2a364f] bg-[#0e131d] px-2.5 py-2 text-xs text-slate-300" /></div></div>
+                <Button data-testid="alert-controls-save-button" type="submit" size="sm" className="w-full bg-[#1f2a41] text-slate-100 hover:bg-[#2a3856]" disabled={alertSettingsMutation.isPending}><Save className="mr-2 size-3.5" />{alertSettingsMutation.isPending ? "Saving…" : "Save alert controls"}</Button>
+              </form></CardContent>
+            </Card>
 
             <Card data-testid="claude-analyst-card" className="overflow-hidden border-[#315080]/60 bg-[#101621]/95 shadow-[0_16px_40px_rgba(28,74,135,0.12)]">
               <CardHeader className="flex-row items-center justify-between border-b border-[#202b42] px-4 py-3">

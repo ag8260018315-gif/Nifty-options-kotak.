@@ -1,9 +1,12 @@
 """Criterion: Current SFeed worker respects market hours and auto-start contract.
 
 Outside 09:15-15:30 IST, GET /api/market-data/feed-status must report MARKET_CLOSED
-with socket/authenticated both false, no fabricated last_tick, and a message that
-confirms the worker is still scheduled to auto-connect at market open (not a dead
-worker requiring a manual restart).
+with socket/authenticated both false, and a message that confirms the worker is
+still scheduled to auto-connect at market open (not a dead worker requiring a
+manual restart). Per the current spec, NIFTY/BANKNIFTY carry a real
+last-verified-snapshot last_tick (never a fabricated "now()" timestamp) while
+the market is closed; FINNIFTY has no verified tick yet so overall last_tick
+reflects the most recent real verified index tick, not a synthetic value.
 """
 
 from datetime import datetime
@@ -30,7 +33,12 @@ def test_feed_status_reports_market_closed_with_no_fake_tick_outside_market_hour
     assert body["state"] == "MARKET_CLOSED", body
     assert body["connected"] is False, body
     assert body["authenticated"] is False, body
-    assert body["last_tick"] is None, "feed-status must not fabricate a last_tick before any real market data tick"
+    # last_tick, when present, must be a real historical verified tick (not "now()").
+    if body["last_tick"] is not None:
+        last_tick = datetime.fromisoformat(body["last_tick"].replace("Z", "+00:00"))
+        assert last_tick < datetime.now(last_tick.tzinfo), (
+            "feed-status must not fabricate a current-time last_tick while the market is closed"
+        )
     assert body["subscriptions"] == 0, body
 
     message = body["message"].lower()

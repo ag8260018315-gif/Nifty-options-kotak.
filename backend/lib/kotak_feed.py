@@ -139,6 +139,7 @@ class KotakSFeed:
         self.last_tick_at: float | None = None
         self.authenticated = False
         self.option_tokens: set[str] = set()
+        self.index_token_count = 0
         self.socket: Any | None = None
 
     async def run_once(self, index_tokens: list[str], option_tokens: list[str]) -> None:
@@ -148,6 +149,7 @@ class KotakSFeed:
             raise ValueError("Kotak SFeed limit is 3000 subscribed instruments")
         async with websockets.connect(websocket_url(self.session.feed_url), ping_interval=20, ping_timeout=10) as socket:
             self.socket = socket
+            self.index_token_count = len(index_tokens)
             await socket.send(json.dumps({
                 "user": settings.ucc,
                 "auth": self.session.token,
@@ -192,7 +194,7 @@ class KotakSFeed:
         if new_tokens:
             await self.socket.send(json.dumps({"event": "subscribeScrips", "inputtoken": ",".join(sorted(new_tokens)), "ack_symbol": True}))
         self.option_tokens = new_tokens
-        await self.on_message({"type": "ready", "subscriptions": 1 + len(new_tokens)})
+        await self.on_message({"type": "ready", "subscriptions": self.index_token_count + len(new_tokens)})
 
     async def _handle_control(self, message: dict[str, Any]) -> bool:
         code = message.get("message_code")

@@ -27,6 +27,10 @@ INDEXES: dict[str, list[IndexModel]] = {
         IndexModel([("id", ASCENDING)], name="id", unique=True),
         IndexModel([("created_at", DESCENDING)], name="created_at_desc"),
     ],
+    "opening_reports": [IndexModel([("session_date", ASCENDING)], name="session_date", unique=True)],
+    "market_snapshot_history": [
+        IndexModel([("trading_day", ASCENDING), ("symbol", ASCENDING), ("captured_at", ASCENDING)], name="day_symbol_captured"),
+    ],
 }
 
 

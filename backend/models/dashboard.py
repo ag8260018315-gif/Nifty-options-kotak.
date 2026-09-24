@@ -1,12 +1,12 @@
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 IndexSymbol = Literal["NIFTY", "BANKNIFTY", "FINNIFTY"]
 MarketState = Literal["LIVE", "STALE", "EXPIRED", "MARKET_CLOSED", "DEMO"]
-FeedAlertType = Literal["ATM_SHIFT", "EXPIRY_DAY", "NEAR_CLOSE", "ROLL_REQUIRED"]
+FeedAlertType = Literal["ATM_SHIFT", "EXPIRY_DAY", "NEAR_CLOSE", "ROLL_REQUIRED", "OPENING_REPORT"]
 
 
 class FeedAlert(BaseModel):
@@ -15,6 +15,43 @@ class FeedAlert(BaseModel):
     title: str
     message: str
     created_at: datetime
+    symbol: IndexSymbol | None = None
+
+
+class AlertSettings(BaseModel):
+    atm_shift_steps: int = Field(default=1, ge=1, le=5)
+    cooldown_seconds: int = Field(default=60, ge=0, le=3600)
+    quiet_start: str = Field(default="15:30", pattern=r"^(?:[01]\d|2[0-3]):[0-5]\d$")
+    quiet_end: str = Field(default="09:15", pattern=r"^(?:[01]\d|2[0-3]):[0-5]\d$")
+
+
+class IndexFeedStatus(BaseModel):
+    symbol: IndexSymbol
+    state: MarketState
+    last_tick: datetime | None
+    atm_strike: int | None
+    expiry: str | None
+    option_subscriptions: int
+    paired_strikes: int
+    expected_pairs: int
+
+
+class OpeningIndexHealth(BaseModel):
+    symbol: IndexSymbol
+    fresh_spot: bool
+    divider_verified: bool
+    option_window_complete: bool
+    paired_ce_pe_complete: bool
+    socket_connected: bool
+    option_subscriptions: int
+    paired_strikes: int
+
+
+class OpeningReport(BaseModel):
+    session_date: str
+    generated_at: datetime
+    status: Literal["PASS", "WARN"]
+    indices: list[OpeningIndexHealth]
 
 
 class FeedStatus(BaseModel):
@@ -28,6 +65,9 @@ class FeedStatus(BaseModel):
     expiry: str | None
     message: str
     alerts: list[FeedAlert]
+    indices: list[IndexFeedStatus]
+    opening_report: OpeningReport | None
+    alert_settings: AlertSettings
 
 
 class SpotSnapshot(BaseModel):
