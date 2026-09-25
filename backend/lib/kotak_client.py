@@ -86,14 +86,40 @@ class KotakNeoClient:
                     headers={**headers, "sid": str(view_sid), "Auth": str(view_token)},
                     json={"mpin": settings.mpin},
                 )
+        try:
+            async with httpx.AsyncClient(timeout=15) as client:
+                login_response = await client.post(
+                    LOGIN_URL,
+                    headers=headers,
+                    json={
+                        "mobileNumber": settings.mobile_number,
+                        "ucc": settings.ucc,
+                        "totp": pyotp.TOTP(settings.totp_secret).now(),
+                    },
+                )
+                login_response.raise_for_status()
+                first = _payload(login_response.json())
+                view_sid = _pick(first, "viewSid", "sid", "Sid")
+                view_token = _pick(first, "viewToken", "Auth", "auth", "token")
+                if not view_sid or not view_token:
+                    raise RuntimeError("unexpected tradeApiLogin response shape")
+
+                validate_response = await client.post(
+                    VALIDATE_URL,
+                    headers={**headers, "sid": str(view_sid), "Auth": str(view_token)},
+                    json={"mpin": settings.mpin},
+                )
                 validate_response.raise_for_status()
-                result = _payload(validate_response.json())except httpx.HTTPStatusError as exc:
-    logger.warning(
-        "Kotak v2 authentication rejected status=%s body=%s",
-        exc.response.status_code,
-        exc.response.text[:1000],
-    )
-    raise RuntimeError("Kotak authentication was rejected") from exc
+                result = _payload(validate_response.json())
+
+        except httpx.HTTPStatusError as exc:
+            logger.warning(
+                "Kotak v2 authentication rejected status=%s body=%s",
+                exc.response.status_code,
+                exc.response.text[:1000],
+            )
+            raise RuntimeError("Kotak authentication was rejected") from exc
+
         except (httpx.HTTPError, ValueError) as exc:
             logger.warning("Kotak v2 authentication transport/JSON error")
             raise RuntimeError("Kotak authentication failed") from exc
