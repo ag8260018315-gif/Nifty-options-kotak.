@@ -87,10 +87,13 @@ class KotakNeoClient:
                     json={"mpin": settings.mpin},
                 )
                 validate_response.raise_for_status()
-                result = _payload(validate_response.json())
-        except httpx.HTTPStatusError as exc:
-            logger.warning("Kotak v2 authentication rejected with status %s", exc.response.status_code)
-            raise RuntimeError("Kotak authentication was rejected") from exc
+                result = _payload(validate_response.json())except httpx.HTTPStatusError as exc:
+    logger.warning(
+        "Kotak v2 authentication rejected status=%s body=%s",
+        exc.response.status_code,
+        exc.response.text[:1000],
+    )
+    raise RuntimeError("Kotak authentication was rejected") from exc
         except (httpx.HTTPError, ValueError) as exc:
             logger.warning("Kotak v2 authentication transport/JSON error")
             raise RuntimeError("Kotak authentication failed") from exc
