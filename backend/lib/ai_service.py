@@ -3,8 +3,14 @@ import os
 from datetime import datetime, timezone
 from typing import Any, AsyncIterator
 
-from emergentintegrations.llm.chat import LlmChat, StreamDone, TextDelta, UserMessage
-
+try:
+    from emergentintegrations.llm.chat import LlmChat, StreamDone, TextDelta, UserMessage
+except ImportError:
+    LlmChat = None
+    StreamDone = None
+    TextDelta = None
+    UserMessage = None
+    
 from lib.db import db
 from lib.kotak_adapter import demo_snapshot
 from lib.settings import settings
