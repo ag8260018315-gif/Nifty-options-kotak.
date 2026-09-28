@@ -16,6 +16,8 @@ class NeoSettings(BaseModel):
     option_chain_path: str = "/market-data/1.0/watchlist/option-chain"
     nifty_index_token: str = "26000"
     scrip_master_path: str = "/script-details/1.0/masterscrip/file-paths"
+    sfeed_url: str = ""  # optional override; empty = SDK default/resolved SFeed endpoint
+    sfeed_auth_field: str = "sid"  # documented SFeed auth value; "token" is a diagnostic fallback
 
     @classmethod
     def from_env(cls) -> "NeoSettings":
@@ -33,6 +35,8 @@ class NeoSettings(BaseModel):
             option_chain_path=os.environ.get("KOTAK_OPTION_CHAIN_PATH", "/market-data/1.0/watchlist/option-chain"),
             nifty_index_token=os.environ.get("KOTAK_NIFTY_INDEX_TOKEN", "26000"),
             scrip_master_path=os.environ.get("KOTAK_SCRIP_MASTER_PATH", "/script-details/1.0/masterscrip/file-paths"),
+            sfeed_url=os.environ.get("KOTAK_SFEED_URL", ""),
+            sfeed_auth_field="token" if os.environ.get("KOTAK_SFEED_AUTH_FIELD", "sid").lower() == "token" else "sid",
         )
 
     @property
