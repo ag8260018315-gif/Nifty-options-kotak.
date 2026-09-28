@@ -1,34 +1,56 @@
-fastapi==0.141.1
-uvicorn==0.52.1
-boto3>=1.34.129
-requests-oauthlib>=2.0.0
-cryptography>=42.0.8
-python-dotenv>=1.0.1
-pymongo==4.17.0
-pydantic>=2.6.4
-email-validator>=2.2.0
-pyjwt>=2.10.1
-passlib>=1.7.4
-# passlib 1.7.4 needs bcrypt<4.1
-bcrypt==4.0.1
-tzdata>=2024.2
-motor==3.7.1
-pytest>=8.0.0
-pytest-xdist>=3.6.0
-pytest-asyncio>=0.24.0
-httpx>=0.27.0
-pyotp>=2.9.0
-websockets>=13.1
-black>=24.1.1
-isort>=5.13.2
-flake8>=7.0.0
-mypy>=1.8.0
-python-jose>=3.3.0
-requests>=2.31.0
-pandas>=2.2.0
-openpyxl>=3.1.5
-numpy>=1.26.0
-python-multipart>=0.0.9
-jq>=1.6.0
-typer>=0.9.0
-kotakneoapi>=3.0.1,<4
+import os
+from typing import Literal
+
+from pydantic import BaseModel
+
+
+class NeoSettings(BaseModel):
+    mode: Literal["DEMO", "LIVE"] = "DEMO"
+    access_token: str = ""
+    mobile_number: str = ""
+    ucc: str = ""
+    mpin: str = ""
+    totp_secret: str = ""
+    neo_fin_key: str = "neotradeapi"
+    vault_key: str = ""
+    option_chain_path: str = "/market-data/1.0/watchlist/option-chain"
+    nifty_index_token: str = "26000"
+    scrip_master_path: str = "/script-details/1.0/masterscrip/file-paths"
+    sfeed_url: str = ""  # optional override; empty = SDK default/resolved SFeed endpoint
+    sfeed_auth_field: str = "sid"  # documented SFeed auth value; "token" is a diagnostic fallback
+
+    @classmethod
+    def from_env(cls) -> "NeoSettings":
+        raw_mode = os.environ.get("KOTAK_MODE", "DEMO").upper()
+        mode = raw_mode if raw_mode in {"DEMO", "LIVE"} else "DEMO"
+        return cls(
+            mode=mode,
+            access_token=os.environ.get("KOTAK_ACCESS_TOKEN", ""),
+            mobile_number=os.environ.get("KOTAK_MOBILE_NUMBER", ""),
+            ucc=os.environ.get("KOTAK_UCC", ""),
+            mpin=os.environ.get("KOTAK_MPIN", ""),
+            totp_secret=os.environ.get("KOTAK_TOTP_SECRET", ""),
+            neo_fin_key=os.environ.get("KOTAK_NEO_FIN_KEY", "neotradeapi"),
+            vault_key=os.environ.get("KOTAK_VAULT_KEY", ""),
+            option_chain_path=os.environ.get("KOTAK_OPTION_CHAIN_PATH", "/market-data/1.0/watchlist/option-chain"),
+            nifty_index_token=os.environ.get("KOTAK_NIFTY_INDEX_TOKEN", "26000"),
+            scrip_master_path=os.environ.get("KOTAK_SCRIP_MASTER_PATH", "/script-details/1.0/masterscrip/file-paths"),
+            sfeed_url=os.environ.get("KOTAK_SFEED_URL", ""),
+            sfeed_auth_field="token" if os.environ.get("KOTAK_SFEED_AUTH_FIELD", "sid").lower() == "token" else "sid",
+        )
+
+    @property
+    def live_configured(self) -> bool:
+        return all(
+            [
+                self.access_token,
+                self.mobile_number,
+                self.ucc,
+                self.mpin,
+                self.totp_secret,
+                self.vault_key,
+            ]
+        )
+
+
+settings = NeoSettings.from_env()
