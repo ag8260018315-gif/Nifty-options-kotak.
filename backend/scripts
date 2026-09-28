@@ -1,0 +1,117 @@
+"""Live SFeed probe (read-only). Run from the backend/ folder:
+
+    python scripts/probe_sfeed.py                 # 40 s, reuses the stored server session
+    python scripts/probe_sfeed.py --seconds 90
+    python scripts/probe_sfeed.py --login         # only if no stored session exists
+
+It reuses the session that the server already stored (no new Kotak login unless --login,
+because a fresh login may end the session the running server is using). It prints counts and
+public index/option prices only - never tokens, sid, UCC, MPIN or TOTP. No order code is imported.
+Exit codes: 0 = live index AND option ticks received, 1 = failed, 2 = SFeed rejected auth, 3 = market closed.
+"""
+import argparse
+import asyncio
+import sys
+import time
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
+
+from dotenv import load_dotenv  # noqa: E402
+
+load_dotenv(ROOT / ".env")
+
+
+async def main(seconds: int, allow_login: bool) -> int:
+    from lib.instruments import instrument_repository
+    from lib.kotak_client import kotak_client
+    from lib.kotak_feed import FeedAuthError, KotakSFeed, _market_open_now
+    from lib.multi_feed_worker import INDEX_SUBSCRIPTIONS
+    from lib.settings import settings
+
+    if not settings.live_configured:
+        print("FAIL: Kotak LIVE configuration is incomplete in backend/.env (names only checked, values not shown).")
+        return 1
+    if not _market_open_now():
+        print("Market is closed (NSE 09:15-15:30 IST, Mon-Fri). No live ticks are expected right now; run this during the session.")
+        return 3
+
+    session = await kotak_client.restore_session()
+    if session is None and allow_login:
+        session = await kotak_client.login()
+    if session is None:
+        print("FAIL: no stored Kotak session. Press Connect on the dashboard first (or rerun with --login).")
+        return 1
+    print(f"session: present, auth_field={settings.sfeed_auth_field}, custom_url={bool(settings.sfeed_url)}")
+
+    index_prices: dict[str, float] = {}
+    option_ticks: dict[str, float] = {}
+
+    async def on_message(message: dict) -> None:
+        if message.get("type") != "tick":
+            return
+        tick = message["tick"]
+        if tick["kind"] == "index":
+            index_prices[tick.get("name") or tick["token"]] = tick["ltp"]
+        else:
+            option_ticks[tick["token"]] = tick["ltp"]
+
+    feed = KotakSFeed(session, on_message)
+    task = asyncio.create_task(feed.run_once(list(INDEX_SUBSCRIPTIONS.values()), []))
+    contracts: dict = {}
+    started = time.monotonic()
+    exit_code = 1
+    try:
+        while time.monotonic() - started < seconds:
+            if task.done():
+                task.result()
+                break
+            nifty = next((price for name, price in index_prices.items() if "50" in name), None)
+            if nifty and not contracts:
+                active = await instrument_repository.active_contracts("NIFTY")
+                atm = min({c.strike for c in active}, key=lambda strike: abs(strike - nifty))
+                selected, _ = await instrument_repository.select_atm_window("NIFTY", atm)
+                contracts = {c.token: c for c in selected}
+                await feed.replace_option_tokens([f"nse_fo|{token}" for token in contracts])
+                print(f"NIFTY spot {nifty} -> ATM {atm}; requested {len(contracts)} option instruments")
+            await asyncio.sleep(0.5)
+    except FeedAuthError as exc:
+        print(f"FAIL: SFeed rejected authentication ({type(exc).__name__}). "
+              "If this repeats, try KOTAK_SFEED_AUTH_FIELD=token once, and send me this line.")
+        return 2
+    except Exception as exc:  # noqa: BLE001
+        text = f"{type(exc).__name__}: {exc}"
+        for secret in (session.token, session.sid, settings.access_token, settings.mpin, settings.mobile_number, settings.ucc):
+            if secret and len(secret) >= 4:
+                text = text.replace(secret, "***")
+        print("FAIL:", text[:300])
+        return 1
+    finally:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+
+    sides: dict[int, set[str]] = {}
+    for token in option_ticks:
+        contract = contracts.get(token)
+        if contract:
+            sides.setdefault(contract.strike, set()).add(contract.option_type)
+    paired = sum(1 for value in sides.values() if value == {"CE", "PE"})
+    print(f"index ticks (last price): {index_prices or 'NONE'}")
+    print(f"feed-confirmed option subscriptions: {len(feed.subscribed_option_tokens)}  (last run state; cleared on close)")
+    print(f"option instruments that ticked: {len(option_ticks)}  paired CE/PE strikes: {paired}/21")
+    print(f"tick counts: {feed.tick_counts}")
+    if index_prices and option_ticks:
+        print("PASS: live Kotak index and option ticks reached the backend.")
+        exit_code = 0
+    else:
+        print("FAIL: connected but the required ticks did not arrive within the window.")
+    return exit_code
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--seconds", type=int, default=40)
+    parser.add_argument("--login", action="store_true", help="allow a fresh Kotak login if no stored session exists")
+    args = parser.parse_args()
+    sys.exit(asyncio.run(main(args.seconds, args.login)))
