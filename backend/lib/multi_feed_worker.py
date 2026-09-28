@@ -117,6 +117,8 @@ class MultiIndexFeedWorker:
         self.alert_settings = AlertSettings()
         self.opening_report: OpeningReport | None = None
         self.error_message = "Waiting for Kotak SFeed"
+        self._handler_errors = 0
+        self._auth_failures = 0
         logger.info("FEED_WORKER_START_SFE event=startup symbols=%s mode=%s live_configured=%s", list(LIVE_SYMBOLS), settings.mode, getattr(settings, "live_configured", False))
 
     def state_for(self, symbol: str) -> str:
@@ -153,7 +155,7 @@ class MultiIndexFeedWorker:
                 last_tick=runtime.last_tick,
                 atm_strike=runtime.current_atm,
                 expiry=runtime.current_expiry.isoformat() if runtime.current_expiry else None,
-                option_subscriptions=len(runtime.contracts),
+                option_subscriptions=self._live_option_subscriptions(runtime),
                 paired_strikes=self._paired_strikes(runtime),
                 expected_pairs=21,
             )
@@ -233,28 +235,67 @@ class MultiIndexFeedWorker:
                 delay = 1.0
             except asyncio.CancelledError:
                 raise
-            except FeedAuthError:
-                self.error_message = "Kotak SFeed authentication expired; re-login scheduled"
+            except FeedAuthError as exc:
+                self._auth_failures += 1
                 self.authenticated = False
                 self.socket_connected = False
-                logger.warning("FEED_WORKER_SFE_ERROR event=feed_auth_error")
-                kotak_client.clear_session()
-                await db.kotak_sessions.update_one({"_id": "current"}, {"$set": {"expires_at": 0}})
+                logger.warning("FEED_WORKER_SFE_ERROR event=feed_auth_error consecutive=%s detail=%s", self._auth_failures, self._safe(exc))
+                if self._auth_failures == 1:
+                    # First rejection: the session may really have expired, so re-login once.
+                    self.error_message = "Kotak SFeed authentication rejected; re-login scheduled"
+                    kotak_client.clear_session()
+                    await db.kotak_sessions.update_one({"_id": "current"}, {"$set": {"expires_at": 0}})
+                else:
+                    # Repeated rejection with a fresh session is not an expiry. Do not hammer Kotak login.
+                    self.error_message = "Kotak SFeed keeps rejecting a fresh session; automatic re-login paused"
+                    pause = min(300, 60 * (self._auth_failures - 1))
+                    logger.error("FEED_WORKER_SFE_ERROR event=feed_auth_repeated consecutive=%s pausing_seconds=%s", self._auth_failures, pause)
+                    await asyncio.sleep(pause)
             except Exception as exc:
                 self.error_message = f"Kotak SFeed reconnecting after {type(exc).__name__}"
                 self.socket_connected = False
                 self.authenticated = False
-                logger.warning("FEED_WORKER_SFE_ERROR event=feed_error kind=%s", type(exc).__name__)
+                logger.warning("FEED_WORKER_SFE_ERROR event=feed_error detail=%s", self._safe(exc))
             await asyncio.sleep(delay + random.random())
             delay = min(delay * 2, 30)
 
+    @staticmethod
+    def _safe(exc: BaseException) -> str:
+        text = f"{type(exc).__name__}: {exc}"
+        session = kotak_client.session
+        secrets = [settings.access_token, settings.mpin, settings.mobile_number, settings.ucc, settings.totp_secret]
+        if session:
+            secrets += [session.token, session.sid]
+        for secret in secrets:
+            if secret and len(secret) >= 4:
+                text = text.replace(secret, "***")
+        return text[:300]
+
+    def _live_option_subscriptions(self, runtime: "IndexRuntime") -> int:
+        """Option contracts of this index that the feed has actually subscribed (not merely selected)."""
+        if not self.feed or not self.socket_connected:
+            return 0
+        subscribed = self.feed.subscribed_option_tokens
+        return sum(1 for token in runtime.contracts if f"nse_fo|{token}" in subscribed)
+
     async def _on_message(self, message: dict[str, Any]) -> None:
+        try:
+            await self._handle_message(message)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            self._handler_errors += 1
+            if self._handler_errors <= 5 or self._handler_errors % 100 == 0:
+                logger.exception("FEED_WORKER_HANDLER_ERROR count=%s", self._handler_errors)
+
+    async def _handle_message(self, message: dict[str, Any]) -> None:
         message_type = message.get("type")
         if message_type == "auth":
-            self.divider_verified = bool(message.get("dividers"))
+            self.divider_verified = bool(message.get("dividers")) or self.divider_verified
             if message.get("message_code") == 1117:
                 self.socket_connected = True
                 self.authenticated = True
+                self._auth_failures = 0
             return
         if message_type == "ready":
             self.subscription_count = int(message.get("subscriptions", 0))
@@ -417,7 +458,8 @@ class MultiIndexFeedWorker:
         for symbol, runtime in self.runtimes.items():
             fresh = bool(runtime.last_tick and (datetime.now(UTC) - runtime.last_tick).total_seconds() < 10)
             paired = self._paired_strikes(runtime)
-            checks.append(OpeningIndexHealth(symbol=symbol, fresh_spot=fresh, divider_verified=self.divider_verified, option_window_complete=len(runtime.contracts) >= 42, paired_ce_pe_complete=paired, socket_connected=self.socket_connected))
+            subscribed = self._live_option_subscriptions(runtime)
+            checks.append(OpeningIndexHealth(symbol=symbol, fresh_spot=fresh, divider_verified=self.divider_verified, option_window_complete=subscribed >= 42, paired_ce_pe_complete=paired >= 21, socket_connected=self.socket_connected, option_subscriptions=subscribed, paired_strikes=paired))
         passed = all(item.fresh_spot and item.divider_verified and item.option_window_complete and item.paired_ce_pe_complete and item.socket_connected for item in checks)
         report = OpeningReport(session_date=local.date().isoformat(), generated_at=datetime.now(UTC), status="PASS" if passed else "WARN", indices=checks)
         self.opening_report = report
