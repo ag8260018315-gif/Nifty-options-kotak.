@@ -5,6 +5,7 @@ import random
 from collections import deque
 from dataclasses import dataclass, field
 from datetime import date, datetime, time, timezone
+from time import monotonic
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -34,6 +35,9 @@ logger = logging.getLogger(__name__)
 
 
 IST = ZoneInfo("Asia/Kolkata")
+# A snapshot (full option chain) is rebuilt and written to Mongo at most this often per index.
+# Before this, every single option tick triggered a full rebuild plus a database write.
+PUBLISH_MIN_INTERVAL = 0.5
 UTC = timezone.utc
 LIVE_SYMBOLS = ("NIFTY", "BANKNIFTY", "FINNIFTY")
 INDEX_SUBSCRIPTIONS = {
@@ -102,6 +106,9 @@ class IndexRuntime:
     last_atm_alert: datetime | None = None
     last_alerted_atm: int | None = None
     last_history_at: datetime | None = None
+    last_publish_at: float = 0.0
+    snapshot_logged: bool = False
+    first_option_logged: bool = False
 
 
 class MultiIndexFeedWorker:
@@ -322,7 +329,9 @@ class MultiIndexFeedWorker:
                 if token in runtime.contracts:
                     runtime.option_ticks[token] = tick
                     runtime.oi_baseline.setdefault(token, int(tick.get("oi", 0)))
-                    logger.info("FEED_WORKER_FIRST_OPTION_TICK symbol=%s token=%s", symbol, token)
+                    if not runtime.first_option_logged:
+                        runtime.first_option_logged = True
+                        logger.info("FEED_WORKER_FIRST_OPTION_TICK symbol=%s token=%s", symbol, token)
                     await self._publish_snapshot(symbol)
                     break
         await self._maybe_opening_report()
@@ -395,6 +404,10 @@ class MultiIndexFeedWorker:
         runtime = self.runtimes[symbol]
         if not runtime.index_tick or not runtime.current_atm or not runtime.current_expiry or not runtime.last_tick:
             return
+        now_mono = monotonic()
+        if now_mono - runtime.last_publish_at < PUBLISH_MIN_INTERVAL:
+            return
+        runtime.last_publish_at = now_mono
         by_strike: dict[int, dict[str, tuple[OptionContract, dict[str, Any]]]] = {}
         for token, contract in runtime.contracts.items():
             tick = runtime.option_ticks.get(token)
@@ -424,7 +437,11 @@ class MultiIndexFeedWorker:
         )
         runtime.snapshot = snapshot
         await db.market_snapshots.replace_one({"_id": symbol}, {"_id": symbol, **snapshot.model_dump()}, upsert=True)
-        logger.info("FEED_WORKER_SNAPSHOT_WRITTEN symbol=%s rows=%s pcr=%.2f", symbol, len(rows), pcr)
+        if not runtime.snapshot_logged:
+            runtime.snapshot_logged = True
+            logger.info("FEED_WORKER_SNAPSHOT_WRITTEN symbol=%s rows=%s pcr=%.2f (later writes are logged at DEBUG)", symbol, len(rows), pcr)
+        else:
+            logger.debug("FEED_WORKER_SNAPSHOT_WRITTEN symbol=%s rows=%s pcr=%.2f", symbol, len(rows), pcr)
         if runtime.last_history_at is None or (runtime.last_tick - runtime.last_history_at).total_seconds() >= 5:
             local_day = runtime.last_tick.astimezone(IST).date().isoformat()
             await db.market_snapshot_history.insert_one(
