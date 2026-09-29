@@ -6,7 +6,8 @@ PUBLIC_TICKER_DELAY_MINUTES (default 0) shows prices from N minutes ago, using t
 """
 import os
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 from typing import Any
 
 from fastapi import APIRouter
@@ -19,7 +20,9 @@ from lib.settings import settings
 
 router = APIRouter(prefix="/public", tags=["public"])
 NAMES = {"NIFTY": "NIFTY 50", "BANKNIFTY": "BANKNIFTY", "FINNIFTY": "FINNIFTY"}
+IST = ZoneInfo("Asia/Kolkata")
 _cache: dict[str, Any] = {"at": 0.0, "body": None}
+_charts_cache: dict[str, Any] = {"at": 0.0, "body": None}
 
 
 def _delay_minutes() -> int:
@@ -93,3 +96,36 @@ async def ticker() -> dict[str, Any]:
         _cache["body"] = await _build_ticker()
         _cache["at"] = now
     return _cache["body"]
+
+
+
+async def _build_charts() -> dict[str, Any]:
+    """Today's 1-minute index closes, or the most recent session that has candles. Never filled in."""
+    delay = _delay_minutes()
+    cutoff = time.time() - delay * 60 if delay else None
+    today = datetime.now(timezone.utc).astimezone(IST).date()
+    series: list[dict[str, Any]] = []
+    for symbol, name in NAMES.items():
+        points: list[dict[str, float]] = []
+        day_used: str | None = None
+        if settings.mode == "LIVE":
+            for back in range(0, 7):
+                day = today - timedelta(days=back)
+                candles = (await candle_store.get(symbol, 1, day))["candles"]
+                if cutoff is not None:
+                    candles = [candle for candle in candles if candle["time"] + 60 <= cutoff]
+                if candles:
+                    points = [{"t": int(candle["time"]), "c": round(float(candle["close"]), 2)} for candle in candles]
+                    day_used = day.isoformat()
+                    break
+        series.append({"symbol": symbol, "name": name, "trading_day": day_used, "is_today": day_used == today.isoformat(), "points": points})
+    return {"series": series, "interval": "1m", "delay_minutes": delay, "generated_at": datetime.now(timezone.utc).isoformat()}
+
+
+@router.get("/charts")
+async def charts() -> dict[str, Any]:
+    now = time.monotonic()
+    if _charts_cache["body"] is None or now - _charts_cache["at"] >= 10.0:
+        _charts_cache["body"] = await _build_charts()
+        _charts_cache["at"] = now
+    return _charts_cache["body"]
