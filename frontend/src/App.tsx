@@ -3,6 +3,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Activity } from "lucide-react";
 import { useState } from "react";
 
+import AccessAdmin, { fetchPendingRequests } from "@/components/AccessAdmin";
 import Home from "@/pages/Home";
 import Landing from "@/pages/Landing";
 import { ApiError, apiGet, apiPost } from "@/lib/api";
@@ -53,6 +54,10 @@ function Unreachable({ onRetry }: { onRetry: () => void }) {
 function SignedInBar({ user }: { user: AccessUser }) {
   const queryClient = useQueryClient();
   const [busy, setBusy] = useState(false);
+  const [panelOpen, setPanelOpen] = useState(false);
+  const isOwner = user.role === "admin";
+  const pending = useQuery({ queryKey: ["access-requests"], queryFn: fetchPendingRequests, refetchInterval: 60_000, retry: false, enabled: isOwner });
+  const pendingCount = pending.data?.length ?? 0;
   const signOut = async () => {
     setBusy(true);
     try {
@@ -65,13 +70,22 @@ function SignedInBar({ user }: { user: AccessUser }) {
     setBusy(false);
   };
   return (
+    <>
     <div data-testid="signed-in-bar" className="fixed bottom-4 left-4 z-40 flex items-center gap-3 rounded-full border border-[#202b42] bg-[#0c0f17]/95 py-1.5 pl-4 pr-1.5 text-xs text-slate-400 shadow-lg backdrop-blur">
       <span className="max-w-[40vw] truncate">{user.email}</span>
-      {user.role === "admin" && <span className="rounded-full bg-[#1f2a41] px-2 py-0.5 text-[10px] text-slate-300">Owner</span>}
+      {isOwner && <span className="rounded-full bg-[#1f2a41] px-2 py-0.5 text-[10px] text-slate-300">Owner</span>}
+      {isOwner && (
+        <button type="button" data-testid="open-access-panel" onClick={() => setPanelOpen(true)} className="flex items-center gap-1.5 rounded-full border border-[#26334b] px-3 py-1 text-slate-200 hover:bg-[#1a2336] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400/50">
+          Access
+          {pendingCount > 0 && <span data-testid="pending-count" className="rounded-full bg-amber-400 px-1.5 text-[10px] font-bold text-[#1a1203]">{pendingCount}</span>}
+        </button>
+      )}
       <button type="button" data-testid="sign-out" disabled={busy} onClick={() => void signOut()} className="rounded-full border border-[#26334b] px-3 py-1 text-slate-200 hover:bg-[#1a2336] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400/50 disabled:opacity-50">
         Sign out
       </button>
     </div>
+    {panelOpen && <AccessAdmin onClose={() => setPanelOpen(false)} />}
+    </>
   );
 }
 

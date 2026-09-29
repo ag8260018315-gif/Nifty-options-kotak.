@@ -3,7 +3,7 @@ import { Activity, LockKeyhole } from "lucide-react";
 
 import { ApiError, apiPost } from "@/lib/api";
 
-type Step = "email" | "code";
+type Step = "email" | "code" | "request" | "requested";
 
 const FEATURES: { title: string; body: string }[] = [
   { title: "Live option chain", body: "ATM ±10 strikes for NIFTY, BANKNIFTY and FINNIFTY, calls and puts side by side, streamed from the Kotak Neo feed." },
@@ -73,6 +73,15 @@ function SignInPanel({ onSignedIn }: { onSignedIn: () => void }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [cooldown, setCooldown] = useState(0);
+  const [name, setName] = useState("");
+  const [note, setNote] = useState("");
+  const [info, setInfo] = useState<string | null>(null);
+
+  const goTo = (next: Step) => {
+    setStep(next);
+    setError(null);
+    setInfo(null);
+  };
 
   useEffect(() => {
     if (cooldown <= 0) return;
@@ -88,6 +97,29 @@ function SignInPanel({ onSignedIn }: { onSignedIn: () => void }) {
       setStep("code");
       setCode("");
       setCooldown(60);
+    } catch (caught) {
+      if (caught instanceof ApiError && caught.status === 403) {
+        goTo("request");
+        setInfo("This email doesn't have access yet. Send a request and you'll get an email once it's approved.");
+      } else {
+        setError(errorText(caught));
+      }
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const requestAccess = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      const result = await apiPost<{ status: "pending" | "approved" }>("/access/request", { email: email.trim(), name: name.trim() || null, note: note.trim() || null });
+      if (result.status === "approved") {
+        goTo("email");
+        setInfo("This email already has access. Send yourself a code to sign in.");
+      } else {
+        goTo("requested");
+      }
     } catch (caught) {
       setError(errorText(caught));
     } finally {
@@ -114,7 +146,11 @@ function SignInPanel({ onSignedIn }: { onSignedIn: () => void }) {
       <div className="mb-8 flex size-11 items-center justify-center rounded-xl border border-[#1d283c] bg-[#131b2a] text-[#e6ebf4]">
         <LockKeyhole className="size-5" />
       </div>
-      <h2 data-testid="signin-title" className="font-heading text-2xl font-semibold tracking-tight text-[#e6ebf4]">Sign in</h2>
+      <h2 data-testid="signin-title" className="font-heading text-2xl font-semibold tracking-tight text-[#e6ebf4]">{step === "request" || step === "requested" ? "Request access" : "Sign in"}</h2>
+
+      {info && (
+        <p data-testid="signin-info" className="mt-3 rounded-lg border border-[#26334b] bg-[#131b2a] px-4 py-3 text-sm leading-relaxed text-[#c3cbda]">{info}</p>
+      )}
 
       {step === "email" ? (
         <form
@@ -125,7 +161,7 @@ function SignInPanel({ onSignedIn }: { onSignedIn: () => void }) {
             if (!busy && email.trim()) void sendCode();
           }}
         >
-          <p className="text-[15px] leading-relaxed text-[#8c98ae]">Access is by invitation. Enter your approved email and we'll send you a 6-digit code.</p>
+          <p className="text-[15px] leading-relaxed text-[#8c98ae]">Enter your email. If it has access, we'll send you a 6-digit code.</p>
           <label htmlFor="signin-email" className="mt-8 block text-sm text-[#c3cbda]">Email</label>
           <input
             id="signin-email"
@@ -147,7 +183,48 @@ function SignInPanel({ onSignedIn }: { onSignedIn: () => void }) {
           >
             {busy ? "Sending code…" : "Send code"}
           </button>
+          <p className="mt-6 text-sm text-[#8c98ae]">
+            New here?{" "}
+            <button type="button" data-testid="signin-go-request" onClick={() => goTo("request")} className="rounded text-[#e6ebf4] underline underline-offset-4 hover:opacity-80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#8c98ae]/40">
+              Request access
+            </button>
+          </p>
         </form>
+      ) : step === "request" ? (
+        <form
+          data-testid="request-access-form"
+          className="mt-3"
+          onSubmit={(event) => {
+            event.preventDefault();
+            if (!busy && email.trim()) void requestAccess();
+          }}
+        >
+          {!info && <p className="text-[15px] leading-relaxed text-[#8c98ae]">The owner reviews every request. You'll get an email when yours is approved.</p>}
+          <label htmlFor="request-email" className="mt-8 block text-sm text-[#c3cbda]">Email</label>
+          <input id="request-email" data-testid="request-email-input" type="email" autoComplete="email" inputMode="email" required value={email} onChange={(event) => setEmail(event.target.value)} placeholder="you@example.com" className="mt-2 h-12 w-full rounded-lg border border-[#26334b] bg-[#0a0f19] px-4 text-[15px] text-[#e6ebf4] placeholder:text-[#4d5a72] outline-none transition-colors focus-visible:border-[#8c98ae] focus-visible:ring-2 focus-visible:ring-[#8c98ae]/30" />
+          <label htmlFor="request-name" className="mt-5 block text-sm text-[#c3cbda]">Name <span className="text-[#5f6c84]">(optional)</span></label>
+          <input id="request-name" data-testid="request-name-input" type="text" autoComplete="name" maxLength={80} value={name} onChange={(event) => setName(event.target.value)} className="mt-2 h-12 w-full rounded-lg border border-[#26334b] bg-[#0a0f19] px-4 text-[15px] text-[#e6ebf4] placeholder:text-[#4d5a72] outline-none transition-colors focus-visible:border-[#8c98ae] focus-visible:ring-2 focus-visible:ring-[#8c98ae]/30" />
+          <label htmlFor="request-note" className="mt-5 block text-sm text-[#c3cbda]">How will you use it? <span className="text-[#5f6c84]">(optional)</span></label>
+          <textarea id="request-note" data-testid="request-note-input" maxLength={300} rows={3} value={note} onChange={(event) => setNote(event.target.value)} className="mt-2 w-full resize-none rounded-lg border border-[#26334b] bg-[#0a0f19] px-4 py-3 text-[15px] text-[#e6ebf4] outline-none transition-colors focus-visible:border-[#8c98ae] focus-visible:ring-2 focus-visible:ring-[#8c98ae]/30" />
+          <button type="submit" data-testid="request-access-submit" disabled={busy || !email.trim()} className="mt-4 h-12 w-full rounded-lg bg-[#e6ebf4] text-[15px] font-semibold text-[#080c14] transition-opacity hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#e6ebf4]/60 focus-visible:ring-offset-2 focus-visible:ring-offset-[#0e1420] disabled:cursor-not-allowed disabled:opacity-40">
+            {busy ? "Sending request…" : "Request access"}
+          </button>
+          <p className="mt-6 text-sm text-[#8c98ae]">
+            Already approved?{" "}
+            <button type="button" data-testid="request-go-signin" onClick={() => goTo("email")} className="rounded text-[#e6ebf4] underline underline-offset-4 hover:opacity-80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#8c98ae]/40">
+              Sign in
+            </button>
+          </p>
+        </form>
+      ) : step === "requested" ? (
+        <div data-testid="request-access-sent" className="mt-3">
+          <p className="text-[15px] leading-relaxed text-[#8c98ae]">
+            Request sent for <span className="text-[#e6ebf4]">{email.trim()}</span>. You'll get an email when the owner approves it. Then come back here and sign in with a code.
+          </p>
+          <button type="button" data-testid="request-done-signin" onClick={() => goTo("email")} className="mt-8 h-12 w-full rounded-lg border border-[#26334b] text-[15px] font-semibold text-[#e6ebf4] hover:bg-[#131b2a] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#8c98ae]/40">
+            Back to sign in
+          </button>
+        </div>
       ) : (
         <form
           data-testid="signin-code-form"
@@ -186,10 +263,7 @@ function SignInPanel({ onSignedIn }: { onSignedIn: () => void }) {
             <button
               type="button"
               data-testid="signin-change-email"
-              onClick={() => {
-                setStep("email");
-                setError(null);
-              }}
+              onClick={() => goTo("email")}
               className="rounded text-[#8c98ae] underline-offset-4 hover:text-[#e6ebf4] hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#8c98ae]/40"
             >
               Use a different email
@@ -213,7 +287,7 @@ function SignInPanel({ onSignedIn }: { onSignedIn: () => void }) {
         </p>
       )}
 
-      <p className="mt-10 text-[13px] leading-relaxed text-[#5f6c84]">No password to remember. Each code works once, and you stay signed in on this device for 7 days.</p>
+      <p className="mt-10 text-[13px] leading-relaxed text-[#5f6c84]">No password to remember. Each code works once, and you stay signed in on this device for 7 days. The owner approves every account.</p>
     </div>
   );
 }
