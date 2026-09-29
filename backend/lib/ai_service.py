@@ -16,9 +16,11 @@ except ImportError:
     TextDelta = None
     UserMessage = None
 
+from lib.candles import candle_store
 from lib.db import db
 from lib.kotak_adapter import demo_snapshot
 from lib.settings import settings
+from lib.trade_plan import build_trade_plan
 from models.ai import AiAnalysisRequest
 from models.dashboard import DashboardSnapshot
 
@@ -28,7 +30,7 @@ logger = logging.getLogger(__name__)
 CLAUDE_MODEL = "claude-haiku-4-5-20251001"
 ANTHROPIC_URL = "https://api.anthropic.com/v1/messages"
 ANTHROPIC_VERSION = "2023-06-01"
-MAX_TOKENS = 350
+MAX_TOKENS = 400
 ATM_WINDOW = 5  # strikes on each side of the at-the-money strike sent to the model
 
 SYSTEM_MESSAGE = """You are the read-only AI analyst inside a NIFTY options dashboard.
@@ -37,8 +39,13 @@ never claim an order was placed, and never provide personalized financial advice
 plain-spoken, and explicit about uncertainty. CE means call option and PE means put option.
 The delta and iv values are model estimates computed by the dashboard (Black-Scholes with a fixed
 6.5% rate), not exchange data. Gamma, theta and vega are not supplied: if asked, say they are not
-available yet instead of estimating them. The signal is a simple rule based on PCR; explain it as
-a rule, not as a prediction. If feed_state is not LIVE, say the data may be stale and give its time.
+available yet instead of estimating them. trade_plan holds the dashboard's rule-based signal: BUY CALLS only when PCR
+is bullish and the index rose over both 5 and 15 minutes, BUY PUTS only when PCR is bearish and it
+fell over both, otherwise WAIT. It also holds two stops for the ATM strike: an index stop (15-minute
+low for CE, 15-minute high for PE) and a premium stop (a fixed percent below the current premium).
+Use trade_plan as the signal; explain it as a rule, never as a prediction or a certainty, and quote
+its stop levels exactly instead of inventing your own. If feed_state is not LIVE, say the data may be
+stale and give its time.
 Every response based on simulated data must begin with 'DEMO ANALYSIS —'. Use plain text,
 no markdown symbols, and never exceed 140 words."""
 
@@ -96,7 +103,7 @@ async def _snapshot(symbol: str) -> DashboardSnapshot:
     return DashboardSnapshot(**raw)
 
 
-def _market_context(snapshot: DashboardSnapshot) -> dict[str, Any]:
+def _market_context(snapshot: DashboardSnapshot, plan: dict[str, Any] | None = None) -> dict[str, Any]:
     chain = sorted(snapshot.option_chain, key=lambda row: row.strike)
     atm_index = next((i for i, row in enumerate(chain) if row.is_atm), None)
     if atm_index is None and chain and snapshot.spot.ltp:
@@ -116,16 +123,17 @@ def _market_context(snapshot: DashboardSnapshot) -> dict[str, Any]:
         "structure": snapshot.structure.model_dump(mode="json"),
         "signal": snapshot.signal.model_dump(mode="json"),
         "atm_option_rows": [row.model_dump(mode="json") for row in rows],
+        "trade_plan": plan,
     }
 
 
 def _task(action: str, message: str | None) -> str:
     if action == "explain":
-        return "Explain the current market structure and signal in 4 short bullets under 100 words. Mention PCR, max pain, OI, and the main risk."
+        return "Explain the trade_plan signal in 4 short points under 110 words: why the rule says what it says (PCR and 5/15 minute momentum), both stop levels for the relevant side, and the main risk."
     if action == "summary":
         return "Write a compact end-of-day style summary under 140 words with Structure, Options positioning, Signal, and Risk headings."
     if action == "alert":
-        return "Create one read-only options alert under 80 words. Headline must identify CE WATCH, PE WATCH, or WAIT; keep the required DEMO ANALYSIS prefix when applicable. Then give at most 3 short reasons and one invalidation condition."
+        return "Create one read-only options alert under 90 words. Headline is CE WATCH if trade_plan.signal is BUY CALLS, PE WATCH if BUY PUTS, otherwise WAIT; keep the required DEMO ANALYSIS prefix when applicable. Then give at most 3 short reasons, the index stop and premium stop from trade_plan for that side, and one invalidation condition."
     return f"Answer this dashboard question in at most 90 words: {message or 'Explain the current setup.'}"
 
 
@@ -192,6 +200,11 @@ async def stream_analysis(request: AiAnalysisRequest) -> AsyncIterator[str]:
         raise RuntimeError("Claude integration is not configured")
 
     snapshot = await _snapshot(request.symbol)
+    try:
+        candles = (await candle_store.get(request.symbol, 1))["candles"]
+    except Exception:  # noqa: BLE001
+        candles = []
+    plan = build_trade_plan(snapshot, candles, snapshot.feed.state)
     history_docs = await db.ai_messages.find({"session_id": request.session_id}).sort("created_at", -1).limit(6).to_list(6)
     history = [
         {"role": item.get("role", "user"), "content": item.get("content", "")}
@@ -199,7 +212,7 @@ async def stream_analysis(request: AiAnalysisRequest) -> AsyncIterator[str]:
     ]
     prompt = json.dumps(
         {
-            "market_context": _market_context(snapshot),
+            "market_context": _market_context(snapshot, plan),
             "recent_conversation": history,
             "task": _task(request.action, request.message),
         },

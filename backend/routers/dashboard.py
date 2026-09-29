@@ -3,14 +3,16 @@ import io
 from datetime import date, datetime, timezone
 from zoneinfo import ZoneInfo
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 
+from lib.access import require_admin
 from lib.candles import candle_store
 from lib.db import db
 from lib.feed_worker import feed_worker
 from lib.kotak_adapter import demo_snapshot
 from lib.settings import settings
+from lib.trade_plan import build_trade_plan
 from models.dashboard import (
     AlertSettings,
     DashboardSnapshot,
@@ -169,7 +171,7 @@ async def get_alert_settings() -> AlertSettings:
     return feed_worker.alert_settings
 
 
-@router.put("/alert-settings", response_model=AlertSettings)
+@router.put("/alert-settings", response_model=AlertSettings, dependencies=[Depends(require_admin)])
 async def update_alert_settings(request: AlertSettings) -> AlertSettings:
     return await feed_worker.update_alert_settings(request)
 
@@ -247,3 +249,18 @@ async def get_index_candles(
     if interval not in (1, 5, 15):
         raise HTTPException(status_code=422, detail="interval must be 1, 5 or 15")
     return await candle_store.get(symbol, interval, day)
+
+
+@router.get("/trade-plan")
+async def get_trade_plan(symbol: IndexSymbol = Query(default="NIFTY")) -> dict:
+    """Read-only rule-based plan: PCR plus live price momentum, with index and premium stops."""
+    if settings.mode == "LIVE":
+        snapshot = feed_worker.snapshot_for(symbol)
+        status = feed_worker.status()
+        index_status = next((item for item in status.indices if item.symbol == symbol), None)
+        feed_state = index_status.state if index_status else status.state
+    else:
+        snapshot = demo_snapshot(symbol)
+        feed_state = "DEMO"
+    candles = (await candle_store.get(symbol, 1))["candles"]
+    return build_trade_plan(snapshot, candles, feed_state)

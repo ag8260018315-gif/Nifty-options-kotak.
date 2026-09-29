@@ -200,6 +200,36 @@ interface CandleResponse {
 
 type ChartInterval = 1 | 5 | 15;
 
+interface PlanSide {
+  strike: number | null;
+  premium: number | null;
+  premium_stop: number | null;
+  index_stop: number | null;
+  index_stop_points: number | null;
+}
+
+interface TradePlan {
+  available: boolean;
+  symbol: IndexSymbol | null;
+  signal: "BUY CALLS" | "BUY PUTS" | "WAIT";
+  reasons: string[];
+  feed_state: string;
+  premium_stop_pct: number;
+  stop_window_minutes: number;
+  as_of: string;
+  rule: string;
+  spot?: number;
+  pcr?: number;
+  pcr_bias?: "BULLISH" | "BEARISH" | "NEUTRAL";
+  trend?: "RISING" | "FALLING" | "MIXED" | "BUILDING";
+  move_5m?: number | null;
+  move_15m?: number | null;
+  atm_strike?: number | null;
+  candles_in_window?: number;
+  ce?: PlanSide;
+  pe?: PlanSide;
+}
+
 const SYMBOLS: IndexSymbol[] = ["NIFTY", "BANKNIFTY", "FINNIFTY"];
 const numberFormat = new Intl.NumberFormat("en-IN", { maximumFractionDigits: 2 });
 const integerFormat = new Intl.NumberFormat("en-IN", { maximumFractionDigits: 0 });
@@ -210,6 +240,7 @@ const fetchAuthStatus = () => apiGet<AuthStatus>("/auth/status");
 const fetchAiStatus = () => apiGet<AiStatus>("/ai/status");
 const fetchFeedStatus = () => apiGet<FeedStatus>("/market-data/feed-status");
 const fetchExportArchive = () => apiGet<ExportArchiveResponse>("/market-data/export-archive");
+const fetchTradePlan = (symbol: IndexSymbol) => apiGet<TradePlan>(`/market-data/trade-plan?symbol=${symbol}`);
 const fetchCandles = (symbol: IndexSymbol) => apiGet<CandleResponse>(`/market-data/candles?symbol=${symbol}&interval=1`);
 
 function formatPrice(value: number) {
@@ -402,6 +433,82 @@ function IndexChartCard({ symbol }: { symbol: IndexSymbol }) {
           </div>
         )}
         <p data-testid="index-chart-disclaimer" className="text-[10px] leading-relaxed text-slate-600">Momentum is a plain price-change readout, not a buy or sell signal. The chart starts when the server first receives live index ticks each day.</p>
+      </CardContent>
+    </Card>
+  );
+}
+
+function planPrice(value: number | null | undefined) {
+  return value === null || value === undefined ? "—" : formatPrice(value);
+}
+
+function PlanSideBox({ label, side, active, tone, stopLabel, pct }: { label: string; side: PlanSide | undefined; active: boolean; tone: "call" | "put"; stopLabel: string; pct: number }) {
+  const accent = tone === "call" ? "text-emerald-300" : "text-rose-300";
+  const ring = active ? (tone === "call" ? "border-emerald-500/50 bg-emerald-500/[0.06]" : "border-rose-500/50 bg-rose-500/[0.06]") : "border-[#202b42] bg-[#090d15]";
+  return (
+    <div data-testid={`trade-plan-${tone}`} className={`rounded-lg border p-3 ${ring}`}>
+      <div className="flex items-baseline justify-between">
+        <p className={`font-heading text-sm font-semibold ${accent}`}>{label}</p>
+        <p className="font-mono text-[11px] text-slate-500">{side?.strike ?? "—"}</p>
+      </div>
+      <dl className="mt-2 space-y-1.5 text-xs">
+        <div className="flex justify-between gap-3"><dt className="text-slate-500">Premium now</dt><dd className="font-mono text-slate-200">{planPrice(side?.premium)}</dd></div>
+        <div className="flex justify-between gap-3"><dt className="text-slate-500">Premium stop ({pct}% below)</dt><dd className="font-mono text-slate-200">{planPrice(side?.premium_stop)}</dd></div>
+        <div className="flex justify-between gap-3"><dt className="text-slate-500">{stopLabel}</dt><dd className="font-mono text-slate-200">{planPrice(side?.index_stop)}</dd></div>
+        <div className="flex justify-between gap-3"><dt className="text-slate-500">Index stop distance</dt><dd className="font-mono text-slate-400">{side?.index_stop_points === null || side?.index_stop_points === undefined ? "—" : `${formatPrice(side.index_stop_points)} pts`}</dd></div>
+      </dl>
+    </div>
+  );
+}
+
+function TradePlanCard({ symbol }: { symbol: IndexSymbol }) {
+  const planQuery = useQuery({
+    queryKey: ["trade-plan", symbol],
+    queryFn: () => fetchTradePlan(symbol),
+    refetchInterval: 2000,
+    retry: false,
+  });
+  const plan = planQuery.data;
+  const signal = plan?.signal ?? "WAIT";
+  const signalClass = signal === "BUY CALLS" ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-300" : signal === "BUY PUTS" ? "border-rose-500/40 bg-rose-500/10 text-rose-300" : "border-slate-500/30 bg-slate-500/10 text-slate-300";
+  const pct = plan?.premium_stop_pct ?? 25;
+  const moveClass = (value: number | null | undefined) => (value === null || value === undefined ? "text-slate-400" : value < 0 ? "text-rose-300" : "text-emerald-300");
+  return (
+    <Card data-testid="trade-plan-card" className="border-[#202b42] bg-[#0c0f17]/95">
+      <CardHeader className="border-b border-[#202b42] px-4 py-3 sm:px-5">
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <CardTitle data-testid="trade-plan-title" className="font-heading text-base text-slate-100">{symbol} trade plan</CardTitle>
+            <p className="mt-1 text-xs text-slate-500">Signals only when PCR and 5- and 15-minute price momentum agree</p>
+          </div>
+          <span data-testid="trade-plan-signal" className={`rounded-md border px-3 py-1 font-heading text-sm font-bold ${signalClass}`}>{signal}</span>
+        </div>
+      </CardHeader>
+      <CardContent className="space-y-3 p-4">
+        {planQuery.isError ? (
+          <p data-testid="trade-plan-error" className="text-xs text-slate-500">The trade plan is unavailable right now.</p>
+        ) : !plan || !plan.available ? (
+          <p data-testid="trade-plan-waiting" className="text-xs text-slate-500">{plan?.reasons[0] ?? "Loading the trade plan…"}</p>
+        ) : (
+          <>
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+              <div className="rounded-md border border-[#202b42] bg-[#090d15] px-3 py-2"><p className="text-[10px] text-slate-500">PCR</p><p data-testid="trade-plan-pcr" className="mt-1 font-mono text-sm font-semibold text-slate-100">{plan.pcr?.toFixed(2) ?? "—"} <span className="text-[10px] font-normal text-slate-500">{plan.pcr_bias?.toLowerCase()}</span></p></div>
+              <div className="rounded-md border border-[#202b42] bg-[#090d15] px-3 py-2"><p className="text-[10px] text-slate-500">Last 5 min</p><p className={`mt-1 font-mono text-sm font-semibold ${moveClass(plan.move_5m)}`}>{plan.move_5m === null || plan.move_5m === undefined ? "—" : `${plan.move_5m >= 0 ? "+" : ""}${formatPrice(plan.move_5m)}`}</p></div>
+              <div className="rounded-md border border-[#202b42] bg-[#090d15] px-3 py-2"><p className="text-[10px] text-slate-500">Last 15 min</p><p className={`mt-1 font-mono text-sm font-semibold ${moveClass(plan.move_15m)}`}>{plan.move_15m === null || plan.move_15m === undefined ? "—" : `${plan.move_15m >= 0 ? "+" : ""}${formatPrice(plan.move_15m)}`}</p></div>
+              <div className="rounded-md border border-[#202b42] bg-[#090d15] px-3 py-2"><p className="text-[10px] text-slate-500">Momentum</p><p data-testid="trade-plan-trend" className="mt-1 font-mono text-sm font-semibold text-slate-200">{(plan.trend ?? "BUILDING").toLowerCase()}</p></div>
+            </div>
+            <div className="grid gap-2 sm:grid-cols-2">
+              <PlanSideBox label="Calls (CE)" side={plan.ce} active={signal === "BUY CALLS"} tone="call" stopLabel={`Index stop (${plan.stop_window_minutes}-min low)`} pct={pct} />
+              <PlanSideBox label="Puts (PE)" side={plan.pe} active={signal === "BUY PUTS"} tone="put" stopLabel={`Index stop (${plan.stop_window_minutes}-min high)`} pct={pct} />
+            </div>
+            <ul data-testid="trade-plan-reasons" className="space-y-1.5">
+              {plan.reasons.map((reason) => (
+                <li key={reason} className="flex items-start gap-2 text-xs text-slate-400"><Check className="mt-0.5 size-3.5 shrink-0 text-slate-500" />{reason}</li>
+              ))}
+            </ul>
+          </>
+        )}
+        <p data-testid="trade-plan-disclaimer" className="border-t border-[#202b42] pt-3 text-[10px] leading-relaxed text-slate-600">A fixed rule, not a prediction or advice. Stops are reference levels for the ATM strike; the app never places orders.</p>
       </CardContent>
     </Card>
   );
@@ -650,6 +757,8 @@ export default function Home() {
 
         <IndexChartCard symbol={symbol} />
 
+        <TradePlanCard symbol={symbol} />
+
         <section className="grid items-start gap-4 xl:grid-cols-[minmax(0,7fr)_minmax(320px,5fr)]">
           <Card data-testid="option-chain-container" className="overflow-hidden border-[#202b42] bg-[#0c0f17]/95 shadow-[0_20px_50px_rgba(0,0,0,0.18)]">
             <CardHeader className="border-b border-[#202b42] px-4 py-3 sm:px-5">
@@ -683,7 +792,7 @@ export default function Home() {
           <div className="space-y-4">
             <Card data-testid="market-structure-card" className="border-[#202b42] bg-[#101621]/90"><CardHeader className="flex-row items-center justify-between border-b border-[#202b42] px-4 py-3"><div><CardTitle data-testid="market-structure-title" className="font-heading text-base text-slate-100">Market structure</CardTitle><p data-testid="market-structure-subtitle" className="mt-1 text-xs text-slate-500">What the chain is leaning toward</p></div><CircleHelp data-testid="market-structure-help" className="size-4 text-slate-600" /></CardHeader><CardContent className="space-y-4 p-4"><div className="flex items-center justify-between"><span data-testid="pcr-interpretation-label" className="text-xs text-slate-400">PCR interpretation</span><Badge data-testid="pcr-interpretation-badge" className="border-emerald-500/30 bg-emerald-500/10 text-[10px] text-emerald-300">{data && hasChainData ? data.structure.bias : "WAITING"}</Badge></div><div className="grid grid-cols-2 gap-3"><div className="rounded-lg border border-[#202b42] bg-[#0e131d] p-3"><p data-testid="structure-pcr-label" className="text-[10px] uppercase tracking-wider text-slate-500">PCR</p><p data-testid="structure-pcr-value" className="mt-2 font-mono text-lg font-bold text-white">{data && hasChainData ? data.structure.pcr.toFixed(2) : "—"}</p></div><div className="rounded-lg border border-[#202b42] bg-[#0e131d] p-3"><p data-testid="structure-max-pain-label" className="text-[10px] uppercase tracking-wider text-slate-500">Max pain</p><p data-testid="structure-max-pain-value" className="mt-2 font-mono text-lg font-bold text-white">{data && hasChainData ? formatInteger(data.structure.max_pain) : "—"}</p></div></div><div data-testid="oi-buildup-summary" className="rounded-lg border border-blue-500/20 bg-blue-500/5 px-3 py-3"><p data-testid="oi-buildup-label" className="text-[10px] uppercase tracking-wider text-blue-300/70">OI buildup</p><p data-testid="oi-buildup-value" className="mt-1 text-sm text-blue-100">{data?.structure.oi_buildup ?? "Waiting for option chain"}</p></div></CardContent></Card>
 
-            <Card data-testid="signal-engine-card" className="signal-pulse border-emerald-500/20 bg-[#101621]/90"><CardHeader className="flex-row items-center justify-between border-b border-[#202b42] px-4 py-3"><div><CardTitle data-testid="signal-engine-title" className="font-heading text-base text-slate-100">Signal engine</CardTitle><p data-testid="signal-engine-subtitle" className="mt-1 text-xs text-slate-500">Normalized inputs · read-only guidance</p></div><Badge data-testid="signal-engine-status" className="border-emerald-500/30 bg-emerald-500/10 text-[10px] text-emerald-300">{hasChainData ? "ACTIVE" : "WAITING"}</Badge></CardHeader><CardContent className="space-y-4 p-4"><div className="flex items-end justify-between"><div><p data-testid="signal-recommendation-label" className="text-[10px] uppercase tracking-[0.16em] text-slate-500">Recommendation</p><p data-testid="signal-recommendation-badge" className="mt-1 font-heading text-xl font-bold text-emerald-300">{data?.signal.recommendation ?? "—"}</p></div><div className="text-right"><p data-testid="signal-confidence-label" className="text-[10px] uppercase tracking-wider text-slate-500">Confidence</p><p data-testid="signal-confidence-value" className="mt-1 font-mono text-lg font-bold text-white">{data ? `${data.signal.confidence}%` : "—"}</p></div></div><div data-testid="signal-confidence-meter" className="h-1.5 overflow-hidden rounded-full bg-[#202b42]"><div className="h-full rounded-full bg-emerald-400 transition-[width] duration-500" style={{ width: `${data?.signal.confidence ?? 0}%` }} /></div><ul data-testid="signal-breakdown-reasons" className="space-y-2">{(data?.signal.reasons ?? ["Waiting for normalized market inputs"]).map((reason, index) => <li key={reason} data-testid={`signal-reason-${index}`} className="flex items-start gap-2 text-xs text-slate-400"><Check className="mt-0.5 size-3.5 shrink-0 text-emerald-400" />{reason}</li>)}</ul><p data-testid="signal-timestamp" className="border-t border-[#202b42] pt-3 font-mono text-[10px] text-slate-600">Updated {data && hasChainData && data.signal.timestamp ? new Date(data.signal.timestamp).toLocaleTimeString("en-IN") : "—"} · informational only</p></CardContent></Card>
+            <Card data-testid="signal-engine-card" className="signal-pulse border-emerald-500/20 bg-[#101621]/90"><CardHeader className="flex-row items-center justify-between border-b border-[#202b42] px-4 py-3"><div><CardTitle data-testid="signal-engine-title" className="font-heading text-base text-slate-100">PCR signal</CardTitle><p data-testid="signal-engine-subtitle" className="mt-1 text-xs text-slate-500">PCR alone. The trade plan adds price momentum and stops.</p></div><Badge data-testid="signal-engine-status" className="border-emerald-500/30 bg-emerald-500/10 text-[10px] text-emerald-300">{hasChainData ? "ACTIVE" : "WAITING"}</Badge></CardHeader><CardContent className="space-y-4 p-4"><div className="flex items-end justify-between"><div><p data-testid="signal-recommendation-label" className="text-[10px] uppercase tracking-[0.16em] text-slate-500">Recommendation</p><p data-testid="signal-recommendation-badge" className={`mt-1 font-heading text-xl font-bold ${data?.signal.recommendation === "BUY PUTS" ? "text-rose-300" : data?.signal.recommendation === "WAIT" ? "text-slate-300" : "text-emerald-300"}`}>{data?.signal.recommendation ?? "—"}</p></div><div className="text-right"><p data-testid="signal-confidence-label" className="text-[10px] uppercase tracking-wider text-slate-500">Confidence</p><p data-testid="signal-confidence-value" className="mt-1 font-mono text-lg font-bold text-white">{data ? `${data.signal.confidence}%` : "—"}</p></div></div><div data-testid="signal-confidence-meter" className="h-1.5 overflow-hidden rounded-full bg-[#202b42]"><div className="h-full rounded-full bg-emerald-400 transition-[width] duration-500" style={{ width: `${data?.signal.confidence ?? 0}%` }} /></div><ul data-testid="signal-breakdown-reasons" className="space-y-2">{(data?.signal.reasons ?? ["Waiting for normalized market inputs"]).map((reason, index) => <li key={reason} data-testid={`signal-reason-${index}`} className="flex items-start gap-2 text-xs text-slate-400"><Check className="mt-0.5 size-3.5 shrink-0 text-emerald-400" />{reason}</li>)}</ul><p data-testid="signal-timestamp" className="border-t border-[#202b42] pt-3 font-mono text-[10px] text-slate-600">Updated {data && hasChainData && data.signal.timestamp ? new Date(data.signal.timestamp).toLocaleTimeString("en-IN") : "—"} · informational only</p></CardContent></Card>
 
             <Card data-testid="alert-controls-card" className="border-[#202b42] bg-[#101621]/90">
               <CardHeader className="flex-row items-center justify-between border-b border-[#202b42] px-4 py-3"><div><CardTitle data-testid="alert-controls-title" className="font-heading text-base text-slate-100">Alert controls</CardTitle><p data-testid="alert-controls-subtitle" className="mt-1 text-xs text-slate-500">ATM sensitivity, cooldown, and quiet hours</p></div><Settings2 data-testid="alert-controls-icon" className="size-4 text-slate-600" /></CardHeader>

@@ -1,4 +1,6 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
+
+from lib.access import require_admin
 
 from lib.kotak_client import kotak_client
 from lib.feed_worker import feed_worker
@@ -48,14 +50,14 @@ async def get_auth_status() -> AuthStatus:
     return current_status()
 
 
-@router.post("/demo", response_model=AuthStatus)
+@router.post("/demo", response_model=AuthStatus, dependencies=[Depends(require_admin)])
 async def confirm_demo_mode(request: DemoModeRequest) -> AuthStatus:
     if not request.confirm:
         raise HTTPException(status_code=400, detail="Demo mode requires explicit confirmation")
     return current_status()
 
 
-@router.post("/connect", response_model=AuthStatus)
+@router.post("/connect", response_model=AuthStatus, dependencies=[Depends(require_admin)])
 async def connect_kotak(request: KotakConnectRequest) -> AuthStatus:
     del request
     if settings.mode != "LIVE":
