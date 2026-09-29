@@ -94,6 +94,25 @@ def _greeks(spot: float, strike: float, premium: float, expiry: date, is_call: b
     return round(sigma * 100, 2), round(delta, 3)
 
 
+def _second_order_greeks(spot: float, strike: float, iv_pct: float, expiry: date, is_call: bool) -> tuple[float | None, float | None, float | None]:
+    """Gamma, theta per calendar day and vega per IV point, from the same model and IV as delta."""
+    sigma = iv_pct / 100
+    if sigma <= 0 or spot <= 0 or strike <= 0:
+        return None, None, None
+    expiry_at = datetime.combine(expiry, time(15, 30), tzinfo=IST).astimezone(UTC)
+    years = max((expiry_at - datetime.now(UTC)).total_seconds() / (365 * 24 * 3600), 1 / (365 * 24))
+    root_t = math.sqrt(years)
+    d1 = (math.log(spot / strike) + (0.065 + sigma * sigma / 2) * years) / (sigma * root_t)
+    d2 = d1 - sigma * root_t
+    pdf = math.exp(-d1 * d1 / 2) / math.sqrt(2 * math.pi)
+    gamma = pdf / (spot * sigma * root_t)
+    vega = spot * pdf * root_t / 100
+    carry = 0.065 * strike * math.exp(-0.065 * years)
+    decay = -spot * pdf * sigma / (2 * root_t)
+    theta_year = decay - carry * _normal_cdf(d2) if is_call else decay + carry * _normal_cdf(-d2)
+    return round(gamma, 6), round(theta_year / 365, 2), round(vega, 2)
+
+
 @dataclass
 class IndexRuntime:
     symbol: str
@@ -115,6 +134,8 @@ class IndexRuntime:
     first_index_logged: bool = False
     last_persist_at: float = 0.0
     persist_task: asyncio.Task | None = None
+    pcr_start: float | None = None
+    pcr_start_at: datetime | None = None
 
 
 class MultiIndexFeedWorker:
@@ -402,10 +423,17 @@ class MultiIndexFeedWorker:
 
     def _leg(self, contract: OptionContract, tick: dict[str, Any], spot: float) -> OptionLeg:
         premium = float(tick.get("ltp", 0))
-        iv, delta = _greeks(spot, contract.strike, premium, contract.expiry, contract.option_type == "CE")
+        is_call = contract.option_type == "CE"
+        iv, delta = _greeks(spot, contract.strike, premium, contract.expiry, is_call)
+        gamma, theta, vega = _second_order_greeks(spot, contract.strike, iv, contract.expiry, is_call)
         oi = int(tick.get("oi", 0))
+        volume = tick.get("volume")
         runtime = self.runtimes[contract.underlying]
-        return OptionLeg(ltp=round(premium, 2), change=round(float(tick.get("change", 0)), 2), oi=oi, oi_change=oi - runtime.oi_baseline.get(contract.token, oi), iv=iv, delta=delta)
+        return OptionLeg(
+            ltp=round(premium, 2), change=round(float(tick.get("change", 0)), 2), oi=oi,
+            oi_change=oi - runtime.oi_baseline.get(contract.token, oi), iv=iv, delta=delta,
+            gamma=gamma, theta=theta, vega=vega, volume=int(volume) if volume is not None else None,
+        )
 
     async def _publish_snapshot(self, symbol: str) -> None:
         runtime = self.runtimes[symbol]
@@ -432,12 +460,16 @@ class MultiIndexFeedWorker:
         bias = "BULLISH" if pcr >= 1.05 else "BEARISH" if pcr <= 0.85 else "NEUTRAL"
         recommendation = "BUY CALLS" if bias == "BULLISH" else "BUY PUTS" if bias == "BEARISH" else "WAIT"
         close = float(runtime.index_tick.get("close", 0))
+        day_open = runtime.index_tick.get("open")
+        today = runtime.last_tick.astimezone(IST).date()
+        if runtime.pcr_start is None or runtime.pcr_start_at is None or runtime.pcr_start_at.astimezone(IST).date() != today:
+            runtime.pcr_start, runtime.pcr_start_at = pcr, runtime.last_tick
         snapshot = DashboardSnapshot(
             symbol=symbol,
             expiry=runtime.current_expiry.strftime("%d %b %Y"),
-            spot=SpotSnapshot(symbol=symbol, ltp=spot, change=round(spot - close, 2) if close else 0, pct_change=float(runtime.index_tick.get("change_pct", 0)), high=float(runtime.index_tick.get("high", spot)), low=float(runtime.index_tick.get("low", spot)), timestamp=runtime.last_tick),
+            spot=SpotSnapshot(symbol=symbol, ltp=spot, change=round(spot - close, 2) if close else 0, pct_change=float(runtime.index_tick.get("change_pct", 0)), high=float(runtime.index_tick.get("high", spot)), low=float(runtime.index_tick.get("low", spot)), timestamp=runtime.last_tick, open=float(day_open) if day_open else None, prev_close=close or None),
             option_chain=rows,
-            structure=MarketStructure(pcr=pcr, max_pain=max_pain, bias=bias, oi_buildup=f"Live OI: {put_oi:,} puts vs {call_oi:,} calls"),
+            structure=MarketStructure(pcr=pcr, max_pain=max_pain, bias=bias, oi_buildup=f"Live OI: {put_oi:,} puts vs {call_oi:,} calls", total_call_oi=call_oi, total_put_oi=put_oi, window_strikes=len(rows), pcr_start=runtime.pcr_start, pcr_start_at=runtime.pcr_start_at),
             signal=SignalSnapshot(recommendation=recommendation, confidence=min(85, 55 + int(abs(pcr - 1) * 100)), reasons=[f"Live PCR is {pcr:.2f}", f"Calculated max pain is {max_pain}", f"Spot is {spot:,.2f} with ATM at {runtime.current_atm}"], timestamp=runtime.last_tick),
             feed=FeedHealth(state=self.state_for(symbol), source="KOTAK_NEO", last_tick=runtime.last_tick, heartbeat_ms=max(0, int((datetime.now(UTC) - runtime.last_tick).total_seconds() * 1000)), subscriptions=self.subscription_count, divider_status="VERIFIED" if self.divider_verified else "PENDING"),
             as_of=runtime.last_tick,

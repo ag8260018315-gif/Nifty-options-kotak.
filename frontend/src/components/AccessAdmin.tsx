@@ -12,8 +12,17 @@ export interface PendingRequest {
 
 interface AccessUserRow {
   email: string;
-  role: "admin" | "viewer";
-  source: "owner" | "render" | "approved";
+  role: "admin" | "viewer" | "trial" | "expired";
+  source: "owner" | "render" | "approved" | "trial";
+  trial_ends_at?: number | null;
+}
+
+function describe(person: AccessUserRow) {
+  if (person.source === "owner") return "Owner";
+  if (person.source === "render") return "Set in Render";
+  if (person.source === "approved") return "Full access";
+  const ends = person.trial_ends_at ? new Date(person.trial_ends_at * 1000).toLocaleDateString("en-IN", { day: "numeric", month: "short", timeZone: "Asia/Kolkata" }) : "";
+  return person.role === "trial" ? `Free trial, ends ${ends}` : `Trial ended ${ends}`;
 }
 
 export const fetchPendingRequests = () => apiGet<PendingRequest[]>("/access/admin/requests");
@@ -80,7 +89,7 @@ export default function AccessAdmin({ onClose }: { onClose: () => void }) {
         <div className="flex items-center justify-between border-b border-[#202b42] px-5 py-4">
           <div>
             <h2 id="access-admin-title" className="font-heading text-base font-semibold text-white">Access</h2>
-            <p className="mt-0.5 text-xs text-slate-500">Approve who can sign in. Changes apply at once.</p>
+            <p className="mt-0.5 text-xs text-slate-500">New sign-ups get a free trial automatically. Changes apply at once.</p>
           </div>
           <button ref={closeRef} type="button" data-testid="access-admin-close" onClick={onClose} className="rounded-md border border-[#26334b] px-3 py-1.5 text-xs text-slate-300 hover:bg-[#1a2336] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400/50">
             Close
@@ -127,13 +136,20 @@ export default function AccessAdmin({ onClose }: { onClose: () => void }) {
                   <li key={person.email} data-testid="access-user-row" className="flex items-center justify-between gap-3 px-3 py-2.5">
                     <div className="min-w-0">
                       <p className="truncate text-sm text-slate-200">{person.email}</p>
-                      <p className="text-[11px] text-slate-500">{person.source === "owner" ? "Owner" : person.source === "render" ? "Set in Render" : "Approved here"}</p>
+                      <p className={`text-[11px] ${person.role === "expired" ? "text-amber-300/80" : "text-slate-500"}`}>{describe(person)}</p>
                     </div>
-                    {person.source === "approved" && (
-                      <button type="button" data-testid="access-remove" disabled={working !== null} onClick={() => void act("/access/admin/remove", person.email, `Removed ${person.email}. They're signed out now.`)} className="h-7 shrink-0 rounded-md border border-rose-500/30 px-2.5 text-[11px] text-rose-300 hover:bg-rose-500/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-300/50 disabled:opacity-50">
-                        Remove
-                      </button>
-                    )}
+                    <div className="flex shrink-0 gap-1.5">
+                      {person.source === "trial" && (
+                        <button type="button" data-testid="access-grant" disabled={working !== null} onClick={() => void act("/access/admin/approve", person.email, `Gave ${person.email} full access. They've been emailed.`)} className="h-7 shrink-0 rounded-md border border-emerald-500/30 px-2.5 text-[11px] text-emerald-300 hover:bg-emerald-500/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-300/50 disabled:opacity-50">
+                          Give full access
+                        </button>
+                      )}
+                      {(person.source === "approved" || (person.source === "trial" && person.role === "trial")) && (
+                        <button type="button" data-testid="access-remove" disabled={working !== null} onClick={() => void act("/access/admin/remove", person.email, `Removed ${person.email}. They're signed out now.`)} className="h-7 shrink-0 rounded-md border border-rose-500/30 px-2.5 text-[11px] text-rose-300 hover:bg-rose-500/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-300/50 disabled:opacity-50">
+                          Remove
+                        </button>
+                      )}
+                    </div>
                   </li>
                 ))}
                 {people.length === 0 && <li className="px-3 py-2.5 text-xs text-slate-500">{users.isLoading ? "Loading…" : "Nobody yet."}</li>}

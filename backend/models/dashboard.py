@@ -94,6 +94,8 @@ class SpotSnapshot(BaseModel):
     high: float
     low: float
     timestamp: datetime | None
+    open: float | None = None
+    prev_close: float | None = None
 
 
 class OptionLeg(BaseModel):
@@ -103,6 +105,11 @@ class OptionLeg(BaseModel):
     oi_change: int
     iv: float
     delta: float
+    # Model estimates (Black-Scholes, same inputs as delta); None when they can't be estimated.
+    gamma: float | None = None
+    theta: float | None = None  # per calendar day
+    vega: float | None = None  # per 1 point of IV
+    volume: int | None = None
 
 
 class OptionRow(BaseModel):
@@ -117,6 +124,12 @@ class MarketStructure(BaseModel):
     max_pain: int
     bias: Literal["BULLISH", "BEARISH", "NEUTRAL"]
     oi_buildup: str
+    # Totals cover the subscribed ATM window only, not the full chain.
+    total_call_oi: int | None = None
+    total_put_oi: int | None = None
+    window_strikes: int | None = None
+    pcr_start: float | None = None  # first PCR since the feed started today
+    pcr_start_at: datetime | None = None
 
 
 class SignalSnapshot(BaseModel):

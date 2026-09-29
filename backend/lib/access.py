@@ -8,6 +8,9 @@ Configuration (Render -> Environment). Nothing here is ever sent to the browser.
   SMTP_USERNAME    the Gmail address that sends emails.   SMTP_PASSWORD  the Gmail app password.
   SMTP_HOST/PORT   default smtp.gmail.com / 587.          SMTP_FROM defaults to SMTP_USERNAME.
   SESSION_DAYS     how long a sign-in lasts, default 7.   APP_URL  link used in emails.
+  SIGNUPS_OPEN     default "true": any email can sign up and gets an automatic free trial.
+  TRIAL_DAYS       length of the free trial, default 7.  SIGNUP_CODES_PER_HOUR  cap for new emails, default 40.
+Roles: admin (owner), viewer (approved, no expiry), trial (free trial running), expired (trial over).
 """
 import asyncio
 import hashlib
@@ -19,6 +22,7 @@ import secrets
 import smtplib
 import ssl
 import time
+from collections import deque
 from email.message import EmailMessage
 from typing import Any
 
@@ -38,6 +42,8 @@ EMAIL_PATTERN = re.compile(r"^[^@\s]{1,64}@[^@\s]{1,255}\.[^@\s]{2,}$")
 _collection_override: dict[str, Any] = {}  # tests inject fake collections by name
 _db_users: dict[str, str] = {}
 _db_users_loaded_at = 0.0
+_trial_cache: dict[str, tuple[float | None, float]] = {}  # email -> (trial ends_at or None, loaded at)
+_signup_codes: deque[float] = deque()
 
 
 def _env(name: str, default: str = "") -> str:
@@ -62,6 +68,24 @@ def _email_set(name: str) -> set[str]:
 
 def admin_emails() -> set[str]:
     return _email_set("ADMIN_EMAILS")
+
+
+def signups_open() -> bool:
+    return _env("SIGNUPS_OPEN", "true").lower() not in {"0", "false", "no", "off"}
+
+
+def trial_days() -> int:
+    try:
+        return max(0, int(_env("TRIAL_DAYS", "7")))
+    except ValueError:
+        return 7
+
+
+def _signup_code_cap() -> int:
+    try:
+        return max(1, int(_env("SIGNUP_CODES_PER_HOUR", "40")))
+    except ValueError:
+        return 40
 
 
 def app_url() -> str:
@@ -113,13 +137,45 @@ async def _load_db_users(force: bool = False) -> dict[str, str]:
     return _db_users
 
 
-async def role_for(email: str) -> str | None:
+async def _trial_end(email: str) -> float | None:
+    cached = _trial_cache.get(email)
+    if cached and time.monotonic() - cached[1] < USER_CACHE_SECONDS:
+        return cached[0]
+    try:
+        doc = await _collection("access_trials").find_one({"_id": email})
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("ACCESS_TRIAL_LOAD_ERROR kind=%s", type(exc).__name__)
+        return cached[0] if cached else None
+    ends_at = float(doc["ends_at"]) if doc and doc.get("ends_at") is not None else None
+    _trial_cache[email] = (ends_at, time.monotonic())
+    return ends_at
+
+
+async def account_for(email: str) -> dict[str, Any] | None:
+    """Who this email is: admin, viewer (approved), trial or expired. None = unknown email."""
     email = normalize_email(email)
     if email in admin_emails():
-        return "admin"
-    if email in _email_set("ALLOWED_EMAILS"):
-        return "viewer"
-    return (await _load_db_users()).get(email)
+        return {"role": "admin", "trial_ends_at": None}
+    if email in _email_set("ALLOWED_EMAILS") or (await _load_db_users()).get(email):
+        return {"role": "viewer", "trial_ends_at": None}
+    ends_at = await _trial_end(email)
+    if ends_at is None:
+        return None
+    return {"role": "trial" if ends_at > time.time() else "expired", "trial_ends_at": ends_at}
+
+
+async def role_for(email: str) -> str | None:
+    account = await account_for(email)
+    return account["role"] if account else None
+
+
+async def _start_trial(email: str) -> float:
+    now = time.time()
+    ends_at = now + trial_days() * 86400
+    await _collection("access_trials").replace_one({"_id": email}, {"_id": email, "started_at": now, "ends_at": ends_at}, upsert=True)
+    _trial_cache[email] = (ends_at, time.monotonic())
+    logger.info("ACCESS_TRIAL_STARTED days=%s", trial_days())
+    return ends_at
 
 
 # ---------------------------------------------------------------------------- email
@@ -161,9 +217,15 @@ async def send_code(email: str) -> None:
     email = normalize_email(email)
     if not valid_email(email):
         raise HTTPException(status_code=422, detail="Enter a valid email address.")
-    if await role_for(email) is None:
+    role = await role_for(email)
+    if role is None and not signups_open():
         raise HTTPException(status_code=403, detail="This email doesn't have access yet. You can request it below.")
     now = time.time()
+    if role is None:
+        while _signup_codes and now - _signup_codes[0] > 3600:
+            _signup_codes.popleft()
+        if len(_signup_codes) >= _signup_code_cap():
+            raise HTTPException(status_code=429, detail="Sign-ups are busy right now. Try again in a few minutes.")
     codes = _collection("access_codes")
     existing = await codes.find_one({"_id": email}) or {}
     recent = [stamp for stamp in existing.get("sends", []) if now - stamp < 3600]
@@ -181,6 +243,8 @@ async def send_code(email: str) -> None:
     )
     if not sent:
         raise HTTPException(status_code=502, detail="The code email couldn't be sent. Try again shortly.")
+    if role is None:
+        _signup_codes.append(now)
     await codes.replace_one(
         {"_id": email},
         {"_id": email, "code_hash": _code_hash(email, code), "expires_at": now + CODE_TTL_SECONDS, "attempts": 0, "sends": recent + [now]},
@@ -195,7 +259,7 @@ async def verify_code(email: str, code: str) -> dict[str, str]:
     if not sign_in_configured():
         raise HTTPException(status_code=503, detail="Email sign-in isn't set up on the server yet.")
     role = await role_for(email)
-    if role is None:
+    if role is None and not signups_open():
         raise HTTPException(status_code=403, detail="This email doesn't have access yet. You can request it below.")
     codes = _collection("access_codes")
     record = await codes.find_one({"_id": email})
@@ -208,8 +272,11 @@ async def verify_code(email: str, code: str) -> dict[str, str]:
         await codes.update_one({"_id": email}, {"$inc": {"attempts": 1}})
         raise HTTPException(status_code=400, detail="That code isn't right. Check the email and try again.")
     await codes.update_one({"_id": email}, {"$unset": {"code_hash": "", "expires_at": ""}, "$set": {"attempts": 0}})
-    logger.info("ACCESS_SIGNED_IN role=%s", role)
-    return {"email": email, "role": role}
+    if role is None:
+        await _start_trial(email)
+    account = await account_for(email) or {"role": "trial", "trial_ends_at": None}
+    logger.info("ACCESS_SIGNED_IN role=%s", account["role"])
+    return {"email": email, "role": account["role"], "trial_ends_at": account["trial_ends_at"]}
 
 
 # ---------------------------------------------------------------------------- access requests
@@ -219,7 +286,7 @@ async def request_access(email: str, name: str | None, note: str | None) -> dict
     email = normalize_email(email)
     if not valid_email(email):
         raise HTTPException(status_code=422, detail="Enter a valid email address.")
-    if await role_for(email) is not None:
+    if await role_for(email) in {"admin", "viewer", "trial"}:
         return {"status": "approved"}
     requests_col = _collection("access_requests")
     if await requests_col.find_one({"_id": email}):
@@ -281,6 +348,12 @@ async def list_users() -> list[dict[str, str]]:
         users.setdefault(email, {"email": email, "role": "viewer", "source": "render"})
     for email in sorted(await _load_db_users(force=True)):
         users.setdefault(email, {"email": email, "role": "viewer", "source": "approved"})
+    now = time.time()
+    trials = await _collection("access_trials").find({}).sort("started_at", -1).to_list(2000)
+    for doc in trials:
+        email = normalize_email(doc["_id"])
+        ends_at = float(doc.get("ends_at") or 0)
+        users.setdefault(email, {"email": email, "role": "trial" if ends_at > now else "expired", "source": "trial", "trial_ends_at": ends_at})
     return list(users.values())
 
 
@@ -290,6 +363,10 @@ async def remove_user(email: str) -> dict[str, Any]:
         raise HTTPException(status_code=400, detail="This email is set in Render. Remove it there instead.")
     await _collection("access_users").delete_one({"_id": email})
     _db_users.pop(email, None)
+    if await _collection("access_trials").find_one({"_id": email}):
+        ended = time.time()
+        await _collection("access_trials").update_one({"_id": email}, {"$set": {"ends_at": ended}})
+        _trial_cache[email] = (ended, time.monotonic())
     logger.info("ACCESS_REMOVED")
     return {"email": email, "removed": True}
 
@@ -310,10 +387,10 @@ async def read_session(token: str | None) -> dict[str, str] | None:
     except jwt.PyJWTError:
         return None
     email = normalize_email(str(claims.get("sub", "")))
-    role = await role_for(email)  # re-checked on every request: removing someone revokes access
-    if role is None:
+    account = await account_for(email)  # re-checked on every request: removing someone revokes access
+    if account is None:
         return None
-    return {"email": email, "role": role}
+    return {"email": email, "role": account["role"], "trial_ends_at": account["trial_ends_at"]}
 
 
 def cookie_settings(max_age: int) -> dict[str, Any]:
@@ -336,6 +413,8 @@ async def require_user(request: Request) -> dict[str, Any]:
     user = await read_session(request.cookies.get(COOKIE_NAME))
     if user is None:
         raise HTTPException(status_code=401, detail="Sign in to continue.")
+    if user["role"] == "expired":
+        raise HTTPException(status_code=402, detail="Your free trial has ended.")
     return user
 
 

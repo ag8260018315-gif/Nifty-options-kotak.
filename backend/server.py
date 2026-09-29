@@ -17,7 +17,7 @@ from lib.db import client, db, ensure_indexes
 from lib.feed_worker import feed_worker
 from lib.access import require_user
 from lib.settings import settings
-from routers import access, ai, auth, dashboard
+from routers import access, ai, auth, dashboard, public
 
 
 # Startup runs before the yield, shutdown after it. Add your own setup/teardown here.
@@ -48,6 +48,7 @@ async def root():
 # Sign-in routes stay public; everything else needs a signed-in, approved email when AUTH_REQUIRED=true.
 signed_in = [Depends(require_user)]
 api_router.include_router(access.router)
+api_router.include_router(public.router)  # landing page: index prices and plan only
 api_router.include_router(auth.router, dependencies=signed_in)
 api_router.include_router(dashboard.router, dependencies=signed_in)
 api_router.include_router(ai.router, dependencies=signed_in)
