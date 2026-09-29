@@ -100,7 +100,7 @@ function AccessGate() {
   }
   return (
     <>
-      <Home />
+      <Home isOwner={access.data.role === "admin"} />
       {access.data.auth_required && access.data.email && <SignedInBar user={access.data} />}
     </>
   );
