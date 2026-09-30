@@ -1,10 +1,23 @@
+"""Read-only AI analyst for the dashboard.
+
+- The model only sees server-computed facts (lib.ai_facts). Every answer is checked before anyone sees it:
+  numbers must match the data and advice wording is rejected. One rewrite is attempted, then a safe fallback.
+- Answers to the built-in actions and suggested questions, and the insight cards, are shared by all users
+  of an index for a few minutes (one generation serves everyone). Free-form questions are never shared.
+- Per-user daily limits: AI_DAILY_LIMIT_TRIAL (default 10), AI_DAILY_LIMIT_MEMBER (default 30). Owner unlimited.
+- A global cap AI_MAX_REQUESTS_PER_HOUR (default 60) still applies to fresh model calls.
+"""
+import asyncio
 import json
 import logging
 import os
+import random
+import re
 import time
 from collections import deque
 from datetime import datetime, timezone
 from typing import Any, AsyncIterator
+from zoneinfo import ZoneInfo
 
 import httpx
 
@@ -16,6 +29,8 @@ except ImportError:
     TextDelta = None
     UserMessage = None
 
+from lib import access
+from lib.ai_facts import CARD_TITLES, allowed_numbers, build_facts, card_data, check_text, compact_rows
 from lib.candles import candle_store
 from lib.db import db
 from lib.kotak_adapter import demo_snapshot
@@ -26,39 +41,78 @@ from models.dashboard import DashboardSnapshot
 
 
 logger = logging.getLogger(__name__)
+IST = ZoneInfo("Asia/Kolkata")
 
 CLAUDE_MODEL = "claude-haiku-4-5-20251001"
 ANTHROPIC_URL = "https://api.anthropic.com/v1/messages"
 ANTHROPIC_VERSION = "2023-06-01"
-MAX_TOKENS = 400
-ATM_WINDOW = 5  # strikes on each side of the at-the-money strike sent to the model
+CHAT_MAX_TOKENS = 450
+CARDS_MAX_TOKENS = 1200
+SHARED_TTL_SECONDS = 180
+CARDS_KEEP_SECONDS = 600
 
-SYSTEM_MESSAGE = """You are the read-only AI analyst inside a NIFTY options dashboard.
-Use only the supplied normalized snapshot and conversation history. Never invent live prices,
-never claim an order was placed, and never provide personalized financial advice. Be concise,
-plain-spoken, and explicit about uncertainty. CE means call option and PE means put option.
-The iv, delta, gamma, theta (per day) and vega (per IV point) values are model estimates computed by
-the dashboard (Black-Scholes with a fixed 6.5% rate), not exchange data; say so when you use them.
-A null Greek means it could not be estimated: say that instead of guessing. OI totals and PCR cover
-only the strikes in atm_option_rows' subscribed window, not the full option chain. trade_plan holds the dashboard's rule-based signal: BUY CALLS only when PCR
-is bullish and the index rose over both 5 and 15 minutes, BUY PUTS only when PCR is bearish and it
-fell over both, otherwise WAIT. It also holds two stops for the ATM strike: an index stop (15-minute
-low for CE, 15-minute high for PE) and a premium stop (a fixed percent below the current premium).
-Use trade_plan as the signal; explain it as a rule, never as a prediction or a certainty, and quote
-its stop levels exactly instead of inventing your own. If feed_state is not LIVE, say the data may be
-stale and give its time.
-Every response based on simulated data must begin with 'DEMO ANALYSIS —'. Use plain text,
-no markdown symbols, and never exceed 140 words."""
+SUGGESTED_QUESTIONS = [
+    "What is happening around the ATM strike?",
+    "Where is open interest concentrated?",
+    "Explain today's PCR.",
+    "What changed in the option chain?",
+    "Summarize the current market structure.",
+    "Which strikes carry the heaviest positioning?",
+]
 
-# The backend URL is public, so cap how many paid model calls it will make per hour.
+SYSTEM_MESSAGE = """You are the read-only AI analyst inside an Indian index options dashboard (NIFTY, BANKNIFTY, FINNIFTY).
+You describe the data you are given. You never give advice.
+
+Rules:
+- Use only the numbers in the supplied facts and rows. Write numbers exactly as given; do not convert units or round
+  differently. If something is not in the data, say it is not available.
+- Never recommend or imply a trade. Do not use the words buy, sell, target, stop loss, entry, exit, go long or go short.
+  Say "call writing" or "put writing" instead of "selling". Never predict future prices ("will rise", "will reach").
+- rule_state is the dashboard's fixed PCR-and-momentum rule. Describe it as a rule's current state, never as advice.
+- iv, delta, gamma, theta and vega are Black-Scholes model estimates, not exchange figures.
+- OI totals and PCR cover only the strikes in the dashboard's ATM window, not the full option chain.
+- If feed_state is not LIVE, say the data may not be current and give data_time_ist.
+- If data_source is DEMO, the data is simulated: start the DATA line with "DEMO ANALYSIS —".
+- Plain text only, no markdown, no bullet symbols. Be concise and neutral."""
+
+ANSWER_FORMAT = """Answer in exactly this format, plain text:
+DATA: one to three short sentences stating what the facts show, with numbers copied from the facts.
+INTERPRETATION: one to three short sentences on what this may mean for reading the market, descriptive only."""
+
+CARD_SCHEMA_PART = {
+    "type": "object",
+    "properties": {
+        "headline": {"type": "string", "description": "At most 8 words, descriptive"},
+        "shows": {"type": "string", "description": "One sentence on what the card's data shows"},
+        "why": {"type": "string", "description": "One or two sentences on why it matters for reading the market"},
+    },
+    "required": ["headline", "shows", "why"],
+    "additionalProperties": False,
+}
+CARDS_SCHEMA = {
+    "type": "object",
+    "properties": {key: CARD_SCHEMA_PART for key in CARD_TITLES},
+    "required": list(CARD_TITLES),
+    "additionalProperties": False,
+}
+
+
+class AiUserError(Exception):
+    """A problem the user should see as-is (limits, missing data, unavailable)."""
+
+
+# ------------------------------------------------------------------ configuration and limits
 _recent_calls: deque[float] = deque()
+_shared: dict[str, tuple[float, str]] = {}
+_cards: dict[str, dict[str, Any]] = {}
+_card_locks: dict[str, asyncio.Lock] = {}
 
 
-def _max_calls_per_hour() -> int:
+def _int_env(name: str, default: int) -> int:
     try:
-        return max(1, int(os.environ.get("AI_MAX_REQUESTS_PER_HOUR", "60")))
+        return max(0, int(os.environ.get(name, str(default))))
     except ValueError:
-        return 60
+        return default
 
 
 def _provider() -> str | None:
@@ -77,11 +131,45 @@ def _take_rate_slot() -> None:
     now = time.monotonic()
     while _recent_calls and now - _recent_calls[0] > 3600:
         _recent_calls.popleft()
-    if len(_recent_calls) >= _max_calls_per_hour():
-        raise RuntimeError("AI hourly request limit reached")
+    if len(_recent_calls) >= max(1, _int_env("AI_MAX_REQUESTS_PER_HOUR", 60)):
+        raise AiUserError("The AI analyst is busy right now. Try again in a few minutes.")
     _recent_calls.append(now)
 
 
+def _daily_limit(user: dict[str, Any] | None) -> int | None:
+    if not user or not user.get("email") or not access.auth_required() or user.get("role") == "admin":
+        return None
+    if user.get("role") == "trial":
+        return _int_env("AI_DAILY_LIMIT_TRIAL", 10)
+    return _int_env("AI_DAILY_LIMIT_MEMBER", 30)
+
+
+def _usage_key(email: str) -> str:
+    return f"{email}:{datetime.now(timezone.utc).astimezone(IST).date().isoformat()}"
+
+
+async def usage_for(user: dict[str, Any] | None) -> dict[str, Any]:
+    limit = _daily_limit(user)
+    if limit is None:
+        return {"used": None, "limit": None, "remaining": None}
+    doc = await db.ai_usage.find_one({"_id": _usage_key(user["email"])}) or {}
+    used = int(doc.get("count", 0))
+    return {"used": used, "limit": limit, "remaining": max(0, limit - used)}
+
+
+async def _check_quota(user: dict[str, Any] | None) -> None:
+    usage = await usage_for(user)
+    if usage["limit"] is not None and usage["remaining"] <= 0:
+        raise AiUserError(f"You've used today's {usage['limit']} AI questions. The limit resets at midnight IST.")
+
+
+async def _count_use(user: dict[str, Any] | None) -> None:
+    if _daily_limit(user) is None:
+        return
+    await db.ai_usage.update_one({"_id": _usage_key(user["email"])}, {"$inc": {"count": 1}, "$set": {"updated_at": time.time()}}, upsert=True)
+
+
+# ------------------------------------------------------------------ market context
 async def _snapshot(symbol: str) -> DashboardSnapshot:
     if settings.mode == "DEMO":
         return demo_snapshot(symbol)
@@ -98,157 +186,226 @@ async def _snapshot(symbol: str) -> DashboardSnapshot:
         return snapshot
     raw = await db.market_snapshots.find_one({"_id": symbol}, projection={"_id": 0})
     if not raw:
-        raw = await db.market_snapshots.find_one({"symbol": symbol}, sort=[("as_of", -1)], projection={"_id": 0})
-    if not raw:
-        raise RuntimeError("No normalized live Kotak snapshot is available for AI analysis")
+        raise AiUserError("There's no live option chain for this index yet, so there's nothing to analyze.")
     return DashboardSnapshot(**raw)
 
 
-def _market_context(snapshot: DashboardSnapshot, plan: dict[str, Any] | None = None) -> dict[str, Any]:
-    chain = sorted(snapshot.option_chain, key=lambda row: row.strike)
-    atm_index = next((i for i, row in enumerate(chain) if row.is_atm), None)
-    if atm_index is None and chain and snapshot.spot.ltp:
-        atm_index = min(range(len(chain)), key=lambda i: abs(chain[i].strike - snapshot.spot.ltp))
-    if atm_index is None:
-        rows = chain
-    else:
-        rows = chain[max(0, atm_index - ATM_WINDOW): atm_index + ATM_WINDOW + 1]
-    return {
-        "mode": snapshot.feed.source,
-        "feed_state": snapshot.feed.state,
-        "last_tick": snapshot.feed.last_tick.isoformat() if snapshot.feed.last_tick else None,
-        "symbol": snapshot.symbol,
-        "expiry": snapshot.expiry,
-        "as_of": snapshot.as_of.isoformat(),
-        "spot": snapshot.spot.model_dump(mode="json"),
-        "structure": snapshot.structure.model_dump(mode="json"),
-        "signal": snapshot.signal.model_dump(mode="json"),
-        "atm_option_rows": [row.model_dump(mode="json") for row in rows],
-        "trade_plan": plan,
-    }
-
-
-def _task(action: str, message: str | None) -> str:
-    if action == "explain":
-        return "Explain the trade_plan signal in 4 short points under 110 words: why the rule says what it says (PCR and 5/15 minute momentum), both stop levels for the relevant side, and the main risk."
-    if action == "summary":
-        return "Write a compact end-of-day style summary under 140 words with Structure, Options positioning, Signal, and Risk headings."
-    if action == "alert":
-        return "Create one read-only options alert under 90 words. Headline is CE WATCH if trade_plan.signal is BUY CALLS, PE WATCH if BUY PUTS, otherwise WAIT; keep the required DEMO ANALYSIS prefix when applicable. Then give at most 3 short reasons, the index stop and premium stop from trade_plan for that side, and one invalidation condition."
-    return f"Answer this dashboard question in at most 90 words: {message or 'Explain the current setup.'}"
-
-
-async def _stream_anthropic(prompt: str) -> AsyncIterator[str]:
-    headers = {
-        "x-api-key": os.environ["ANTHROPIC_API_KEY"],
-        "anthropic-version": ANTHROPIC_VERSION,
-        "content-type": "application/json",
-    }
-    body = {
-        "model": CLAUDE_MODEL,
-        "max_tokens": MAX_TOKENS,
-        "system": SYSTEM_MESSAGE,
-        "messages": [{"role": "user", "content": prompt}],
-        "stream": True,
-    }
-    timeout = httpx.Timeout(60.0, connect=10.0)
-    async with httpx.AsyncClient(timeout=timeout) as client:
-        async with client.stream("POST", ANTHROPIC_URL, headers=headers, json=body) as response:
-            if response.status_code != 200:
-                raw = (await response.aread()).decode("utf-8", "replace")
-                try:
-                    error_type = json.loads(raw).get("error", {}).get("type", "unknown")
-                except (ValueError, AttributeError):
-                    error_type = "unknown"
-                logger.warning("AI_ERROR provider=anthropic status=%s type=%s", response.status_code, error_type)
-                raise RuntimeError(f"Anthropic API returned {response.status_code} ({error_type})")
-            async for line in response.aiter_lines():
-                if not line.startswith("data:"):
-                    continue
-                try:
-                    event = json.loads(line[5:].strip())
-                except ValueError:
-                    continue
-                kind = event.get("type")
-                if kind == "content_block_delta":
-                    delta = event.get("delta", {})
-                    if delta.get("type") == "text_delta" and delta.get("text"):
-                        yield delta["text"]
-                elif kind == "error":
-                    error_type = event.get("error", {}).get("type", "unknown")
-                    logger.warning("AI_ERROR provider=anthropic stream_error type=%s", error_type)
-                    raise RuntimeError(f"Anthropic stream error ({error_type})")
-                elif kind == "message_stop":
-                    break
-
-
-async def _stream_emergent(prompt: str, session_id: str) -> AsyncIterator[str]:
-    chat = LlmChat(
-        api_key=os.environ["EMERGENT_LLM_KEY"],
-        session_id=f"options-{session_id}",
-        system_message=SYSTEM_MESSAGE,
-    ).with_model("anthropic", CLAUDE_MODEL).with_params(max_tokens=MAX_TOKENS)
-    async for event in chat.stream_message(UserMessage(text=prompt)):
-        if isinstance(event, TextDelta):
-            yield event.content
-        elif isinstance(event, StreamDone):
-            break
-
-
-async def stream_analysis(request: AiAnalysisRequest) -> AsyncIterator[str]:
-    provider = _provider()
-    if provider is None:
-        raise RuntimeError("Claude integration is not configured")
-
-    snapshot = await _snapshot(request.symbol)
+async def _context(symbol: str) -> tuple[DashboardSnapshot, dict[str, Any], list[list[float]], list[float]]:
+    snapshot = await _snapshot(symbol)
     try:
-        candles = (await candle_store.get(request.symbol, 1))["candles"]
+        candles = (await candle_store.get(symbol, 1))["candles"]
     except Exception:  # noqa: BLE001
         candles = []
     plan = build_trade_plan(snapshot, candles, snapshot.feed.state)
-    history_docs = await db.ai_messages.find({"session_id": request.session_id}).sort("created_at", -1).limit(6).to_list(6)
-    history = [
-        {"role": item.get("role", "user"), "content": item.get("content", "")}
-        for item in reversed(history_docs)
-    ]
-    prompt = json.dumps(
-        {
-            "market_context": _market_context(snapshot, plan),
-            "recent_conversation": history,
-            "task": _task(request.action, request.message),
-        },
-        separators=(",", ":"),
-    )
-    _take_rate_slot()
+    facts = build_facts(snapshot, plan)
+    if "spot" not in facts or "pcr" not in facts:
+        raise AiUserError("The option chain isn't complete yet, so there's nothing reliable to analyze.")
+    rows = compact_rows(snapshot)
+    return snapshot, facts, rows, allowed_numbers(facts, rows)
 
-    created_at = datetime.now(timezone.utc)
-    if request.action == "chat" and request.message:
-        await db.ai_messages.insert_one(
-            {
-                "session_id": request.session_id,
-                "role": "user",
-                "content": request.message,
-                "symbol": request.symbol,
-                "created_at": created_at,
-            }
-        )
 
-    stream = _stream_anthropic(prompt) if provider == "anthropic" else _stream_emergent(prompt, request.session_id)
+# ------------------------------------------------------------------ model calls
+async def _anthropic(system: str, user_text: str, max_tokens: int, schema: dict[str, Any] | None = None) -> str:
+    headers = {"x-api-key": os.environ["ANTHROPIC_API_KEY"], "anthropic-version": ANTHROPIC_VERSION, "content-type": "application/json"}
+    body: dict[str, Any] = {"model": CLAUDE_MODEL, "max_tokens": max_tokens, "system": system, "messages": [{"role": "user", "content": user_text}]}
+    if schema is not None:
+        body["output_config"] = {"format": {"type": "json_schema", "schema": schema}}
+    delays = [1.0, 3.0]
+    async with httpx.AsyncClient(timeout=httpx.Timeout(60.0, connect=10.0)) as client:
+        for attempt in range(len(delays) + 1):
+            response = await client.post(ANTHROPIC_URL, headers=headers, json=body)
+            if response.status_code == 200:
+                payload = response.json()
+                stop = payload.get("stop_reason")
+                if stop in {"max_tokens", "refusal"}:
+                    logger.warning("AI_ERROR provider=anthropic stop_reason=%s", stop)
+                    raise AiUserError("The AI analyst couldn't complete that answer. Try again.")
+                return "".join(block.get("text", "") for block in payload.get("content", []) if block.get("type") == "text").strip()
+            try:
+                error_type = response.json().get("error", {}).get("type", "unknown")
+            except ValueError:
+                error_type = "unknown"
+            logger.warning("AI_ERROR provider=anthropic status=%s type=%s attempt=%s", response.status_code, error_type, attempt + 1)
+            if response.status_code == 400 and schema is not None and "output_config" in body:
+                body.pop("output_config")  # older API behaviour: fall back to asking for JSON in the prompt
+                continue
+            if response.status_code == 429:
+                retry_after = response.headers.get("retry-after")
+                if retry_after is None or attempt >= 1:
+                    raise AiUserError("The AI analyst has reached its usage limit. Try again later.")
+                await asyncio.sleep(min(10.0, float(retry_after)))
+                continue
+            if response.status_code in {500, 502, 503, 504, 529} and attempt < len(delays):
+                await asyncio.sleep(delays[attempt] + random.random() * 0.5)
+                continue
+            raise AiUserError("The AI analyst is temporarily unavailable. Try again shortly.")
+    raise AiUserError("The AI analyst is temporarily unavailable. Try again shortly.")
+
+
+async def _emergent(system: str, user_text: str, max_tokens: int, session_id: str) -> str:
+    chat = LlmChat(api_key=os.environ["EMERGENT_LLM_KEY"], session_id=f"options-{session_id}", system_message=system).with_model("anthropic", CLAUDE_MODEL).with_params(max_tokens=max_tokens)
     parts: list[str] = []
-    async for piece in stream:
-        parts.append(piece)
-        yield piece
+    async for event in chat.stream_message(UserMessage(text=user_text)):
+        if isinstance(event, TextDelta):
+            parts.append(event.content)
+        elif isinstance(event, StreamDone):
+            break
+    return "".join(parts).strip()
 
-    content = "".join(parts).strip()
-    collection = "ai_alerts" if request.action == "alert" else "ai_summaries" if request.action == "summary" else "ai_messages"
-    await db[collection].insert_one(
-        {
-            "session_id": request.session_id,
-            "role": "assistant",
-            "action": request.action,
-            "content": content,
-            "symbol": request.symbol,
-            "source": snapshot.feed.source,
-            "created_at": datetime.now(timezone.utc),
+
+async def _complete(system: str, user_text: str, max_tokens: int, schema: dict[str, Any] | None = None, session_id: str = "shared") -> str:
+    provider = _provider()
+    if provider is None:
+        raise AiUserError("The AI analyst isn't configured on the server.")
+    _take_rate_slot()
+    if provider == "anthropic":
+        return await _anthropic(system, user_text, max_tokens, schema)
+    return await _emergent(system, user_text, max_tokens, session_id)
+
+
+def _problems_note(problems: dict[str, list[str]]) -> str:
+    notes = []
+    if problems["numbers"]:
+        notes.append(f"these numbers are not in the data: {', '.join(problems['numbers'][:8])}")
+    if problems["advice"]:
+        notes.append(f"these words are not allowed: {', '.join(problems['advice'])}")
+    return "Your previous answer was rejected because " + "; ".join(notes) + ". Rewrite it using only the supplied numbers and descriptive wording."
+
+
+# ------------------------------------------------------------------ answers
+def _task(action: str, message: str | None) -> str:
+    if action == "explain":
+        return "Explain the current rule_state: which facts (PCR, 5 and 15 minute moves) put the rule in this state, and what would have to change for it to move."
+    if action == "summary":
+        return "Summarize the session so far: price action, open interest positioning, volatility, and the main uncertainty in the data."
+    if action == "alert":
+        return "Describe the single most notable change in the option chain right now. Start with a line 'HEADLINE:' of at most 8 descriptive words, then the DATA and INTERPRETATION lines."
+    return f"Answer this question about the dashboard data: {message or 'Summarize the current market structure.'}"
+
+
+def _shared_key(symbol: str, action: str, message: str | None) -> str | None:
+    if action != "chat":
+        return f"{symbol}:{action}"
+    normalized = (message or "").strip().rstrip("?.! ").lower()
+    for question in SUGGESTED_QUESTIONS:
+        if normalized == question.rstrip("?.! ").lower():
+            return f"{symbol}:q:{normalized}"
+    return None
+
+
+async def _grounded_answer(action: str, message: str | None, facts: dict[str, Any], rows: list[list[float]], allowed: list[float], history: list[dict[str, str]], session_id: str) -> str:
+    prompt = {"facts": facts, "rows_atm_window": {"columns": ["strike", "call_oi", "call_oi_change", "put_oi", "put_oi_change"], "rows": rows}, "recent_conversation": history, "task": _task(action, message)}
+    text = await _complete(SYSTEM_MESSAGE, json.dumps(prompt, separators=(",", ":")) + "\n\n" + ANSWER_FORMAT, CHAT_MAX_TOKENS, session_id=session_id)
+    problems = check_text(text, allowed)
+    if problems["numbers"] or problems["advice"]:
+        logger.warning("AI_REWRITE numbers=%s advice=%s", len(problems["numbers"]), problems["advice"])
+        text = await _complete(SYSTEM_MESSAGE, json.dumps(prompt, separators=(",", ":")) + "\n\n" + ANSWER_FORMAT + "\n\n" + _problems_note(problems), CHAT_MAX_TOKENS, session_id=session_id)
+        problems = check_text(text, allowed)
+        if problems["numbers"] or problems["advice"]:
+            logger.warning("AI_WITHHELD numbers=%s advice=%s", problems["numbers"][:5], problems["advice"])
+            return ("DATA: The answer didn't match the dashboard's figures exactly, so it was withheld.\n"
+                    "INTERPRETATION: Try asking in a different way, or read the figures directly from the dashboard.")
+    return text
+
+
+async def stream_analysis(request: AiAnalysisRequest, user: dict[str, Any] | None = None) -> AsyncIterator[str]:
+    if _provider() is None:
+        raise AiUserError("The AI analyst isn't configured on the server.")
+    key = _shared_key(request.symbol, request.action, request.message)
+    cached = _shared.get(key) if key else None
+    if cached and time.time() - cached[0] < SHARED_TTL_SECONDS:
+        text = cached[1]
+    else:
+        await _check_quota(user)
+        snapshot, facts, rows, allowed = await _context(request.symbol)
+        history: list[dict[str, str]] = []
+        if key is None:
+            docs = await db.ai_messages.find({"session_id": request.session_id}).sort("created_at", -1).limit(6).to_list(6)
+            history = [{"role": item.get("role", "user"), "content": item.get("content", "")} for item in reversed(docs)]
+        text = await _grounded_answer(request.action, request.message, facts, rows, allowed, history, request.session_id)
+        if key:
+            _shared[key] = (time.time(), text)
+        await _count_use(user)
+        await db.ai_messages.insert_many([
+            {"session_id": request.session_id, "role": "user", "action": request.action, "content": request.message or request.action, "symbol": request.symbol, "created_at": datetime.now(timezone.utc)},
+            {"session_id": request.session_id, "role": "assistant", "action": request.action, "content": text, "symbol": request.symbol, "source": snapshot.feed.source, "created_at": datetime.now(timezone.utc)},
+        ])
+    # Deliver the checked answer in small pieces so it types out on screen.
+    for start in range(0, len(text), 18):
+        yield text[start:start + 18]
+        await asyncio.sleep(0.012)
+
+
+# ------------------------------------------------------------------ insight cards
+def cached_cards(symbol: str) -> dict[str, Any] | None:
+    entry = _cards.get(symbol)
+    if entry and time.time() - entry["_created"] < CARDS_KEEP_SECONDS:
+        return {key: value for key, value in entry.items() if not key.startswith("_")}
+    return None
+
+
+def _parse_json(text: str) -> dict[str, Any]:
+    cleaned = re.sub(r"^```(?:json)?|```$", "", text.strip(), flags=re.MULTILINE).strip()
+    start, end = cleaned.find("{"), cleaned.rfind("}")
+    return json.loads(cleaned[start:end + 1] if start >= 0 and end > start else cleaned)
+
+
+async def generate_cards(symbol: str) -> dict[str, Any]:
+    lock = _card_locks.setdefault(symbol, asyncio.Lock())
+    async with lock:  # one generation per index at a time; everyone else gets the result
+        entry = _cards.get(symbol)
+        if entry and time.time() - entry["_created"] < SHARED_TTL_SECONDS:
+            return cached_cards(symbol) or {}
+        snapshot, facts, rows, allowed = await _context(symbol)
+        data = card_data(facts)
+        instructions = (
+            "Write five insight cards: oi, pcr, volatility, greeks, structure. For each: headline (at most 8 descriptive words), "
+            "shows (one sentence on what that card's data shows), why (one or two sentences on why it matters for reading the market). "
+            "Descriptive only. Numbers only from the facts. Return JSON matching the schema, nothing else."
+        )
+        prompt = json.dumps({"facts": facts, "card_data": data, "rows_atm_window": rows}, separators=(",", ":"))
+        texts: dict[str, Any] = {}
+        ai_note: str | None = None
+        try:
+            for attempt in range(2):
+                raw = await _complete(SYSTEM_MESSAGE, prompt + "\n\n" + instructions, CARDS_MAX_TOKENS, schema=CARDS_SCHEMA)
+                try:
+                    parsed = _parse_json(raw)
+                except (ValueError, json.JSONDecodeError):
+                    logger.warning("AI_CARDS_BAD_JSON attempt=%s", attempt + 1)
+                    continue
+                texts = parsed
+                failing = [key for key in CARD_TITLES if not isinstance(parsed.get(key), dict) or any(check_text(" ".join(str(parsed[key].get(field, "")) for field in ("headline", "shows", "why")), allowed).values())]
+                if not failing:
+                    break
+                logger.warning("AI_CARDS_REWRITE failing=%s", failing)
+                instructions += f" Previous attempt broke the rules on: {', '.join(failing)}. Use only supplied numbers and no advice wording."
+        except AiUserError as exc:  # the numbers on the cards come from the server, so they still show
+            ai_note = str(exc)
+            texts = {}
+        cards = []
+        for key, title in CARD_TITLES.items():
+            part = texts.get(key) if isinstance(texts.get(key), dict) else None
+            ok = bool(part) and not any(check_text(" ".join(str(part.get(field, "")) for field in ("headline", "shows", "why")), allowed).values())
+            cards.append({
+                "id": key,
+                "title": title,
+                "data": data[key],
+                "headline": part.get("headline") if ok and part else None,
+                "shows": part.get("shows") if ok and part else None,
+                "why": part.get("why") if ok and part else None,
+                "withheld": not ok,
+            })
+        now = datetime.now(timezone.utc)
+        result = {
+            "symbol": symbol,
+            "generated_at": now.isoformat(),
+            "data_as_of": (snapshot.feed.last_tick or snapshot.as_of).isoformat() if (snapshot.feed.last_tick or snapshot.as_of) else None,
+            "feed_state": snapshot.feed.state,
+            "note": ai_note,
+            "cards": cards,
         }
-    )
+        if ai_note is None:  # a failed attempt is not kept, so the next click can try again
+            _cards[symbol] = {**result, "_created": time.time()}
+            await db.ai_summaries.insert_one({"symbol": symbol, "action": "cards", "content": json.dumps(result), "created_at": now})
+        return result

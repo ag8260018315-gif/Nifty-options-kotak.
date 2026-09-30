@@ -1,16 +1,16 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Activity, Bell, Bot, Check, ChevronDown, CircleHelp, Cloud, Download, FileText, KeyRound, LockKeyhole, MessageSquare, RefreshCw, Save, Send, Settings2, ShieldCheck, Sparkles, Sunrise, Wifi } from "lucide-react";
+import { Activity, Bell, Check, ChevronDown, CircleHelp, Cloud, Download, KeyRound, LockKeyhole, RefreshCw, Save, Settings2, ShieldCheck, Sunrise, Wifi } from "lucide-react";
 import { toast } from "sonner";
 
+import AiAnalyst from "@/components/AiAnalyst";
 import { DeskNav, GreeksLadder, IndexOverviewCard, MarketTicker, OptionChainTable, PcrOiCard } from "@/components/MarketDesk";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Toaster } from "@/components/ui/sonner";
-import { Textarea } from "@/components/ui/textarea";
-import { apiDownload, apiGet, apiPost, apiPut, apiStream } from "@/lib/api";
+import { apiDownload, apiGet, apiPost, apiPut } from "@/lib/api";
 
 type IndexSymbol = "NIFTY" | "BANKNIFTY" | "FINNIFTY";
 type MarketState = "LIVE" | "STALE" | "EXPIRED" | "MARKET_CLOSED" | "DISCONNECTED" | "DEMO";
@@ -183,13 +183,6 @@ interface AiStatus {
   provider: "anthropic";
   model: string;
   capabilities: AiAction[];
-}
-
-interface AiAnalysisRequest {
-  action: AiAction;
-  symbol: IndexSymbol;
-  session_id: string;
-  message?: string;
 }
 
 interface Candle {
@@ -533,9 +526,6 @@ export default function Home({ isOwner = true }: { isOwner?: boolean }) {
   const [range, setRange] = useState("5");
   const [connectOpen, setConnectOpen] = useState(false);
   const [demoOpen, setDemoOpen] = useState(false);
-  const [aiOutput, setAiOutput] = useState("");
-  const [aiAction, setAiAction] = useState<AiAction>("explain");
-  const [chatQuestion, setChatQuestion] = useState("");
   const [aiSessionId] = useState(() => window.crypto.randomUUID());
   const [atmShiftSteps, setAtmShiftSteps] = useState(1);
   const [cooldownSeconds, setCooldownSeconds] = useState(60);
@@ -626,31 +616,6 @@ export default function Home({ isOwner = true }: { isOwner?: boolean }) {
       toast.success(`${target} CSV exported`, { description: "Verified Kotak snapshots from the current trading day." });
     },
     onError: () => toast.error("No verified live data is available to export yet"),
-  });
-
-  const aiMutation = useMutation({
-    mutationFn: async ({ action, message }: { action: AiAction; message?: string }) => {
-      let result = "";
-      setAiAction(action);
-      setAiOutput("");
-      const request: AiAnalysisRequest = { action, symbol, session_id: aiSessionId, message };
-      await apiStream("/ai/stream", request, (delta) => {
-        result += delta;
-        setAiOutput(result);
-      });
-      return { action, result };
-    },
-    onSuccess: ({ action, result }) => {
-      if (action === "chat") setChatQuestion("");
-      if (action === "alert") {
-        const headline = result.split("\n")[0] || `${symbol} AI alert`;
-        toast(headline, { description: "Read-only Claude analysis. Review the invalidation before acting." });
-        if ("Notification" in window && Notification.permission === "granted") {
-          new Notification(`${symbol} · ${headline}`, { body: result.slice(0, 180) });
-        }
-      }
-    },
-    onError: () => toast.error("Claude analysis is temporarily unavailable"),
   });
 
   const enableNotifications = async () => {
@@ -803,36 +768,16 @@ export default function Home({ isOwner = true }: { isOwner?: boolean }) {
               </form></CardContent>
             </Card>
 
-            <Card id="ai" data-testid="claude-analyst-card" className="overflow-hidden border-[#315080]/60 bg-[#101621]/95 shadow-[0_16px_40px_rgba(28,74,135,0.12)]">
-              <CardHeader className="flex-row items-center justify-between border-b border-[#202b42] px-4 py-3">
-                <div className="flex items-center gap-2.5"><div data-testid="claude-analyst-icon" className="flex size-8 items-center justify-center rounded-md bg-blue-500/10 text-blue-300"><Bot className="size-4" /></div><div><CardTitle data-testid="claude-analyst-title" className="font-heading text-base text-slate-100">Claude AI analyst</CardTitle><p data-testid="claude-analyst-model" className="mt-0.5 text-[10px] text-slate-500">Haiku 4.5 · streaming · read-only</p></div></div>
-                <Badge data-testid="claude-analyst-status" className={aiStatusQuery.data?.configured ? "border-blue-500/30 bg-blue-500/10 text-[10px] text-blue-300" : "border-amber-500/30 bg-amber-500/10 text-[10px] text-amber-300"}>{!aiStatusQuery.data?.configured ? "OFFLINE" : aiMutation.isPending ? "STREAMING" : "READY"}</Badge>
-              </CardHeader>
-              <CardContent className="space-y-3 p-4">
-                <div data-testid="claude-action-grid" className="grid grid-cols-2 gap-2">
-                  <Button data-testid="claude-explain-button" type="button" variant="outline" size="sm" className="justify-start border-[#2a364f] bg-[#0e131d] text-slate-300" onClick={() => aiMutation.mutate({ action: "explain" })} disabled={aiMutation.isPending}><Sparkles className="mr-2 size-3.5 text-blue-300" />Explain signal</Button>
-                  <Button data-testid="claude-summary-button" type="button" variant="outline" size="sm" className="justify-start border-[#2a364f] bg-[#0e131d] text-slate-300" onClick={() => aiMutation.mutate({ action: "summary" })} disabled={aiMutation.isPending}><FileText className="mr-2 size-3.5 text-blue-300" />Daily summary</Button>
-                  <Button data-testid="claude-alert-button" type="button" variant="outline" size="sm" className="justify-start border-amber-500/25 bg-amber-500/5 text-amber-200" onClick={() => aiMutation.mutate({ action: "alert" })} disabled={aiMutation.isPending}><Bell className="mr-2 size-3.5" />CE / PE alert</Button>
-                  <Button data-testid="claude-notifications-button" type="button" variant="outline" size="sm" className="justify-start border-[#2a364f] bg-[#0e131d] text-slate-400" onClick={enableNotifications}><Bell className="mr-2 size-3.5" />Enable notify</Button>
-                </div>
-                <div data-testid="claude-output-panel" className="min-h-28 rounded-lg border border-[#202b42] bg-[#090d15] p-3">
-                  <div className="flex items-center justify-between gap-2"><p data-testid="claude-output-label" className="text-[10px] font-semibold uppercase tracking-[0.16em] text-blue-300/80">{aiAction === "alert" ? "Options alert" : aiAction === "summary" ? "Daily summary" : aiAction === "chat" ? "Chat response" : "Signal explanation"}</p>{modeLabel === "DEMO" && <Badge data-testid="claude-demo-badge" className="border-indigo-500/25 bg-indigo-500/10 text-[9px] text-indigo-300">DEMO INPUT</Badge>}</div>
-                  <p data-testid="claude-output-text" className="mt-2 whitespace-pre-wrap text-xs leading-relaxed text-slate-300">{aiMutation.isPending && !aiOutput ? "Claude is reading the normalized option chain…" : aiOutput || "Choose an analysis action or ask a question about the current chain."}</p>
-                </div>
-                <form data-testid="claude-chat-form" className="space-y-2" onSubmit={(event) => { event.preventDefault(); const question = chatQuestion.trim(); if (question) aiMutation.mutate({ action: "chat", message: question }); }}>
-                  <label data-testid="claude-chat-label" htmlFor="claude-chat-input" className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500"><MessageSquare className="size-3" />Ask about this chain</label>
-                  <div className="flex gap-2"><Textarea id="claude-chat-input" data-testid="claude-chat-input" value={chatQuestion} onChange={(event) => setChatQuestion(event.target.value)} maxLength={1000} rows={2} placeholder="Why does the current OI favor CE, PE, or waiting?" className="min-h-16 resize-none border-[#2a364f] bg-[#0e131d] text-xs text-slate-200 placeholder:text-slate-600" /><Button data-testid="claude-chat-submit-button" type="submit" size="icon" className="h-16 w-11 shrink-0 bg-blue-600 text-white hover:bg-blue-500" disabled={aiMutation.isPending || !chatQuestion.trim()}><Send className="size-4" /></Button></div>
-                </form>
-                <p data-testid="claude-disclaimer" className="text-[10px] leading-relaxed text-slate-600">AI output is informational, may be wrong, and never places orders. Verify CE/PE alerts against live price, liquidity, and risk.</p>
-              </CardContent>
-            </Card>
-
             <Card data-testid="kotak-vault-card" className="border-[#202b42] bg-[#0e131d]/90"><CardContent className="p-4"><div className="flex items-start gap-3"><div className="flex size-8 shrink-0 items-center justify-center rounded-md bg-[#e31837]/10 text-[#f04a63]"><LockKeyhole className="size-4" /></div><div className="min-w-0"><p data-testid="kotak-vault-title" className="text-sm font-semibold text-slate-200">Kotak Neo vault boundary</p><p data-testid="kotak-vault-message" className="mt-1 text-xs leading-relaxed text-slate-500">{isOwner ? authMessage : "The owner manages the Kotak connection. You see the same live data."}</p></div></div>{isOwner && <Button data-testid="vault-connect-action" variant="outline" size="sm" className="mt-4 w-full border-[#2a364f] bg-transparent text-slate-300 hover:bg-[#171e2e]" onClick={() => setConnectOpen(true)}><KeyRound className="mr-2 size-3.5" />Review connection setup</Button>}</CardContent></Card>
           </div>
         </section>
 
         <section id="greeks" aria-label="Greeks" className="scroll-mt-4">
           <GreeksLadder rows={visibleRows} spot={data && hasMarketTick ? data.spot.ltp : null} />
+        </section>
+
+        <section id="ai" aria-label="AI analyst" className="scroll-mt-4">
+          <AiAnalyst symbol={symbol} configured={Boolean(aiStatusQuery.data?.configured)} demo={modeLabel === "DEMO"} dataAsOf={data && hasChainData ? data.as_of : null} sessionId={aiSessionId} onEnableNotifications={enableNotifications} />
         </section>
 
         <footer data-testid="app-footer" className="flex flex-col gap-2 border-t border-[#1e2638] pt-4 text-[10px] text-slate-600 sm:flex-row sm:items-center sm:justify-between"><span data-testid="compliance-disclaimer">Read-only market analytics. Not investment advice. No orders are placed by this dashboard.</span>{isOwner && <button data-testid="demo-mode-toggle" type="button" className="flex items-center gap-1 text-indigo-400 transition-colors hover:text-indigo-300" onClick={() => setDemoOpen(true)}><RefreshCw className="size-3" />Keep DEMO mode enabled</button>}</footer>
