@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Activity, ArrowUpRight, Bell, Bot, Check, ChevronDown, CircleHelp, Cloud, Download, FileText, Gauge, KeyRound, LockKeyhole, MessageSquare, RefreshCw, Save, Send, Settings2, ShieldCheck, Sparkles, Sunrise, Wifi } from "lucide-react";
+import { Activity, Bell, Bot, Check, ChevronDown, CircleHelp, Cloud, Download, FileText, KeyRound, LockKeyhole, MessageSquare, RefreshCw, Save, Send, Settings2, ShieldCheck, Sparkles, Sunrise, Wifi } from "lucide-react";
 import { toast } from "sonner";
 
+import { DeskNav, GreeksLadder, IndexOverviewCard, MarketTicker, OptionChainTable, PcrOiCard } from "@/components/MarketDesk";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -22,6 +23,8 @@ interface SpotSnapshot {
   high: number;
   low: number;
   timestamp: string | null;
+  open?: number | null;
+  prev_close?: number | null;
 }
 
 interface OptionLeg {
@@ -31,6 +34,10 @@ interface OptionLeg {
   oi_change: number;
   iv: number;
   delta: number;
+  gamma?: number | null;
+  theta?: number | null;
+  vega?: number | null;
+  volume?: number | null;
 }
 
 interface OptionRow {
@@ -45,6 +52,11 @@ interface MarketStructure {
   max_pain: number;
   bias: "BULLISH" | "BEARISH" | "NEUTRAL";
   oi_buildup: string;
+  total_call_oi?: number | null;
+  total_put_oi?: number | null;
+  window_strikes?: number | null;
+  pcr_start?: number | null;
+  pcr_start_at?: string | null;
 }
 
 interface SignalSnapshot {
@@ -669,7 +681,6 @@ export default function Home({ isOwner = true }: { isOwner?: boolean }) {
   const hasMarketTick = data?.feed.source === "DEMO" || Boolean(selectedIndexFeed?.last_tick);
   const hasChainData = visibleRows.length > 0;
   const atmStrike = selectedIndexFeed?.atm_strike ?? data?.option_chain.find((row) => row.is_atm)?.strike ?? null;
-  const spotChangeUp = (data?.spot.change ?? 0) >= 0;
   const canExport = Boolean(data?.feed.source === "KOTAK_NEO" && data.feed.last_tick && data.option_chain.length >= 21);
 
   return (
@@ -716,6 +727,9 @@ export default function Home({ isOwner = true }: { isOwner?: boolean }) {
       </header>
 
       <main className="relative mx-auto max-w-[1600px] space-y-4 px-4 py-5 sm:px-6">
+        <DeskNav />
+        <MarketTicker active={symbol} onSelect={setSymbol} />
+
         <div className="pointer-events-none absolute left-0 right-0 top-0 h-32 overflow-hidden opacity-20"><div className="scanline h-0.5 w-full bg-gradient-to-r from-transparent via-blue-400 to-transparent" /></div>
         <section data-testid="dashboard-intro" className="relative flex flex-col justify-between gap-3 sm:flex-row sm:items-end">
           <div>
@@ -735,60 +749,45 @@ export default function Home({ isOwner = true }: { isOwner?: boolean }) {
           </div>
         </section>
 
-        <section data-testid="export-archive-card" className="rounded-xl border border-emerald-500/15 bg-[#0e131d]/90 px-4 py-3">
+        <section id="export" data-testid="export-archive-card" className="rounded-xl border border-emerald-500/15 bg-[#0e131d]/90 px-4 py-3">
           <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
             <div className="flex items-center gap-3"><div data-testid="export-archive-icon" className="flex size-9 items-center justify-center rounded-lg bg-emerald-500/10 text-emerald-300"><Download className="size-4" /></div><div><p data-testid="export-archive-title" className="text-sm font-semibold text-slate-200">Today’s verified exports</p><p data-testid="export-archive-status" className="mt-0.5 text-[11px] text-slate-500">{exportArchiveQuery.data?.prepared_at ? `Closing manifest prepared ${new Date(exportArchiveQuery.data.prepared_at).toLocaleTimeString("en-IN")}` : "Closing manifest prepares automatically after 15:31 IST"}</p></div></div>
             <div className="flex flex-wrap gap-2">{(exportArchiveQuery.data?.items ?? []).map((item) => <div key={item.symbol} data-testid={`export-archive-item-${item.symbol.toLowerCase()}`} className="flex items-center gap-2 rounded-lg border border-[#253149] bg-[#090d15] px-2.5 py-2"><div><p data-testid={`export-archive-symbol-${item.symbol.toLowerCase()}`} className="font-mono text-[10px] font-semibold text-slate-300">{item.symbol}</p><p data-testid={`export-archive-count-${item.symbol.toLowerCase()}`} className="text-[9px] text-slate-600">{item.available ? `${item.snapshot_count} snapshots · ${item.row_count} rows` : "Waiting for verified ticks"}</p></div><Button data-testid={`export-archive-download-${item.symbol.toLowerCase()}`} type="button" variant="ghost" size="icon" className="size-7 text-emerald-300 hover:bg-emerald-500/10" disabled={!item.available || exportMutation.isPending} onClick={() => exportMutation.mutate(item.symbol)}><Download className="size-3.5" /></Button></div>)}</div>
           </div>
         </section>
 
-        <section data-testid="market-summary-grid" className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-          <Card size="sm" className="border-[#202b42] bg-[#101621]/90 sm:col-span-2 xl:col-span-1">
-            <CardContent className="p-4">
-              <div className="flex items-start justify-between"><p data-testid="ticker-spot-price-label" className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-500">Spot price</p><span data-testid="ticker-atm-strike-badge" className="rounded-full border border-blue-500/30 bg-blue-500/10 px-2 py-0.5 font-mono text-[10px] text-blue-300">ATM {hasMarketTick && atmStrike !== null ? atmStrike : "—"}</span></div>
-              <p data-testid="ticker-spot-price" className="mt-2 font-mono text-2xl font-bold tabular-nums tracking-tight text-white">{data && hasMarketTick ? formatPrice(data.spot.ltp) : "—"}</p>
-              <div className="mt-1 flex items-center gap-2"><span data-testid="ticker-day-change" className={`font-mono text-xs font-semibold ${spotChangeUp ? "text-emerald-400" : "text-rose-400"}`}>{data && hasMarketTick ? `${data.spot.change >= 0 ? "+" : ""}${formatPrice(data.spot.change)} (${data.spot.pct_change >= 0 ? "+" : ""}${data.spot.pct_change}%)` : "Waiting for first Kotak tick"}</span>{hasMarketTick && <ArrowUpRight className={`size-3 ${spotChangeUp ? "text-emerald-400" : "rotate-90 text-rose-400"}`} />}</div>
-              <div className="mt-3 flex justify-between border-t border-[#202b42] pt-2 text-[10px] text-slate-500"><span data-testid="ticker-day-range-high">H {data && hasMarketTick ? formatPrice(data.spot.high) : "—"}</span><span data-testid="ticker-day-range-low">L {data && hasMarketTick ? formatPrice(data.spot.low) : "—"}</span></div>
-            </CardContent>
-          </Card>
-          <MetricCard label="Put / call ratio" value={data && hasChainData ? data.structure.pcr.toFixed(2) : "—"} detail={data?.structure.oi_buildup ?? "Awaiting option chain"} icon={Gauge} accent="text-blue-300" testId="pcr-gauge-value" />
-          <MetricCard label="Max pain" value={data && hasChainData ? formatInteger(data.structure.max_pain) : "—"} detail={data && hasChainData ? `${data.structure.bias} structure bias` : "Awaiting live option ticks"} icon={Activity} accent={data?.structure.bias === "BULLISH" ? "text-emerald-300" : "text-slate-100"} testId="max-pain-value" />
-          <MetricCard label="SFeed socket health" value={feedStatusQuery.data?.connected ? "CONNECTED" : feedState} detail={selectedIndexFeed ? `${selectedIndexFeed.option_subscriptions + 1} ${symbol} instruments · ${selectedIndexFeed.paired_strikes}/${selectedIndexFeed.expected_pairs} paired` : "Server feed health pending"} icon={Wifi} accent={feedStatusQuery.data?.connected ? "text-emerald-300" : "text-amber-300"} testId="feed-health-value" />
+        <section id="overview" data-testid="market-summary-grid" className="grid scroll-mt-4 gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          <IndexOverviewCard symbol={symbol} spot={data?.spot} hasTick={Boolean(data && hasMarketTick)} state={feedState} lastTick={lastTickValue ?? null} atmStrike={atmStrike} expiry={data?.expiry} />
+          <PcrOiCard structure={data?.structure} rows={data?.option_chain ?? []} hasChain={hasChainData} />
+          <div className="grid gap-3">
+            <MetricCard label="Max pain" value={data && hasChainData ? formatInteger(data.structure.max_pain) : "—"} detail={data && hasChainData ? `${data.structure.bias} structure bias` : "Awaiting live option ticks"} icon={Activity} accent={data?.structure.bias === "BULLISH" ? "text-emerald-300" : "text-slate-100"} testId="max-pain-value" />
+            <MetricCard label="SFeed socket health" value={feedStatusQuery.data?.connected ? "CONNECTED" : feedState} detail={selectedIndexFeed ? `${selectedIndexFeed.option_subscriptions + 1} ${symbol} instruments · ${selectedIndexFeed.paired_strikes}/${selectedIndexFeed.expected_pairs} paired` : "Server feed health pending"} icon={Wifi} accent={feedStatusQuery.data?.connected ? "text-emerald-300" : "text-amber-300"} testId="feed-health-value" />
+          </div>
         </section>
 
         <IndexChartCard symbol={symbol} />
 
-        <TradePlanCard symbol={symbol} />
+        <div id="signals" className="scroll-mt-4">
+          <TradePlanCard symbol={symbol} />
+        </div>
 
         <section className="grid items-start gap-4 xl:grid-cols-[minmax(0,7fr)_minmax(320px,5fr)]">
-          <Card data-testid="option-chain-container" className="overflow-hidden border-[#202b42] bg-[#0c0f17]/95 shadow-[0_20px_50px_rgba(0,0,0,0.18)]">
-            <CardHeader className="border-b border-[#202b42] px-4 py-3 sm:px-5">
-              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                <div><CardTitle data-testid="option-chain-title" className="font-heading text-base text-slate-100">Option chain / Greeks ladder</CardTitle><p data-testid="option-chain-subtitle" className="mt-1 text-xs text-slate-500">Calls on the left · puts on the right · ATM highlighted</p></div>
-                <div className="flex items-center gap-2">
-                  <Button data-testid="export-csv-button" type="button" variant="outline" size="sm" className="border-emerald-500/25 bg-emerald-500/5 text-[11px] text-emerald-300 hover:bg-emerald-500/10" disabled={!canExport || exportMutation.isPending} title={canExport ? `Export today's verified ${symbol} snapshots` : "Available after the first verified Kotak option snapshot"} onClick={() => exportMutation.mutate(symbol)}><Download className="mr-1.5 size-3.5" />{exportMutation.isPending ? "Preparing…" : "Export CSV"}</Button>
-                  <label data-testid="strike-filter-label" htmlFor="strike-filter-range" className="sr-only">Strike range</label>
-                  <select id="strike-filter-range" data-testid="strike-filter-range" value={range} onChange={(event) => setRange(event.target.value)} className="rounded-md border border-[#2a364f] bg-[#111622] px-2.5 py-2 text-[11px] text-slate-300 outline-none focus:border-blue-500"><option value="3">±3 strikes</option><option value="5">±5 strikes</option><option value="10">±10 strikes</option></select>
-                  <label data-testid="expiry-date-label" htmlFor="expiry-date-select" className="sr-only">Expiry</label>
-                  <select id="expiry-date-select" data-testid="expiry-date-select" defaultValue="current" className="rounded-md border border-[#2a364f] bg-[#111622] px-2.5 py-2 text-[11px] text-slate-300 outline-none focus:border-blue-500"><option value="current">{data?.expiry ?? "Current expiry"}</option></select>
-                </div>
-              </div>
-            </CardHeader>
-            <CardContent className="p-0">
-              <p data-testid="export-status-message" className="border-b border-[#202b42] px-4 py-2 text-[10px] text-slate-600">{canExport ? `CSV includes all verified ${symbol} snapshots captured today` : "CSV unlocks after the first verified Kotak spot and paired CE/PE snapshot"}</p>
-              <div className="overflow-x-auto">
-                <table className="w-full min-w-[880px] border-collapse text-right">
-                  <thead data-testid="option-chain-table-head" className="bg-[#0e131d] text-[9px] uppercase tracking-[0.12em] text-slate-500"><tr><th colSpan={5} className="border-r border-[#202b42] px-2 py-2 text-center text-emerald-400/80">Call side</th><th rowSpan={2} className="bg-[#141c2b] px-3 py-2 text-center text-blue-300">Strike</th><th colSpan={5} className="px-2 py-2 text-center text-rose-300/80">Put side</th></tr><tr><th className="px-2 pb-2">OI chg</th><th className="px-2 pb-2">OI</th><th className="px-2 pb-2">IV</th><th className="px-2 pb-2">Delta</th><th className="border-r border-[#202b42] px-2 pb-2">LTP</th><th className="px-2 pb-2">LTP</th><th className="px-2 pb-2">Delta</th><th className="px-2 pb-2">IV</th><th className="px-2 pb-2">OI</th><th className="px-2 pb-2">OI chg</th></tr></thead>
-                  <tbody data-testid="option-chain-table-body">{visibleRows.map((row) => <tr key={row.strike} data-testid={`option-chain-row-${row.strike}`} className={`data-hover border-t border-[#182134] text-xs font-mono tabular-nums ${row.is_atm ? "bg-[#1e293b]/80" : "odd:bg-[#0e131d]/70"}`}>
-                    <td className={`px-2 py-3 ${row.call.oi_change >= 0 ? "text-emerald-400" : "text-rose-400"}`}>{row.call.oi_change >= 0 ? "+" : ""}{formatInteger(row.call.oi_change)}</td><td className="relative px-2 py-3 text-slate-300"><div data-testid={`call-oi-bar-${row.strike}`} className="absolute bottom-1 right-1 h-0.5 bg-emerald-500/40" style={{ width: `${Math.min(70, row.call.oi / 2000)}%` }} />{formatInteger(row.call.oi)}</td><td className="px-2 py-3 text-slate-400">{row.call.iv.toFixed(1)}%</td><td className="px-2 py-3 text-emerald-300">{row.call.delta.toFixed(2)}</td><td data-testid={`call-ltp-cell-${row.strike}`} className="border-r border-[#202b42] px-2 py-3 font-semibold text-emerald-300">{formatPrice(row.call.ltp)}</td>
-                    <td data-testid={`strike-cell-${row.strike}`} className={`bg-[#141c2b] px-3 py-3 text-center font-semibold ${row.is_atm ? "text-blue-200" : "text-slate-100"}`}>{row.strike}{row.is_atm && <span data-testid={`atm-marker-${row.strike}`} className="ml-1 text-[8px] text-blue-400">ATM</span>}</td>
-                    <td data-testid={`put-ltp-cell-${row.strike}`} className="px-2 py-3 font-semibold text-rose-300">{formatPrice(row.put.ltp)}</td><td className="px-2 py-3 text-rose-300">{row.put.delta.toFixed(2)}</td><td className="px-2 py-3 text-slate-400">{row.put.iv.toFixed(1)}%</td><td className="relative px-2 py-3 text-slate-300"><div data-testid={`put-oi-bar-${row.strike}`} className="absolute bottom-1 left-1 h-0.5 bg-rose-500/40" style={{ width: `${Math.min(70, row.put.oi / 2000)}%` }} />{formatInteger(row.put.oi)}</td><td className={`px-2 py-3 ${row.put.oi_change >= 0 ? "text-emerald-400" : "text-rose-400"}`}>{row.put.oi_change >= 0 ? "+" : ""}{formatInteger(row.put.oi_change)}</td>
-                  </tr>)}</tbody>
-                </table>
-              </div>
-              <div data-testid="option-chain-footnote" className="flex items-center justify-between border-t border-[#202b42] px-4 py-3 text-[10px] text-slate-500"><span>{data && hasChainData ? `${visibleRows.length} strikes around ATM · ${data.feed.source === "DEMO" ? "simulated" : "Kotak Neo live"} snapshot` : feedStatusQuery.data?.message ?? "Loading normalized chain…"}</span><span className="font-mono tabular-nums">as of {data && hasChainData ? new Date(data.as_of).toLocaleTimeString("en-IN") : "—"}</span></div>
-            </CardContent>
-          </Card>
+          <div id="option-chain" className="scroll-mt-4">
+            <OptionChainTable
+              symbol={symbol}
+              rows={visibleRows}
+              allRows={data?.option_chain ?? []}
+              spot={data && hasMarketTick ? data.spot.ltp : null}
+              expiry={data?.expiry}
+              range={range}
+              onRange={setRange}
+              onExport={() => exportMutation.mutate(symbol)}
+              canExport={canExport}
+              exporting={exportMutation.isPending && exportMutation.variables === symbol}
+              footnote={data && hasChainData ? `${visibleRows.length} strikes around ATM from the ${data.feed.source === "DEMO" ? "demo" : "Kotak Neo live"} snapshot. ${canExport ? `CSV includes all verified ${symbol} snapshots captured today.` : "CSV unlocks after the first verified snapshot."}` : feedStatusQuery.data?.message ?? "Loading the option chain…"}
+              asOf={data && hasChainData ? data.as_of : null}
+            />
+          </div>
 
           <div className="space-y-4">
             <Card data-testid="market-structure-card" className="border-[#202b42] bg-[#101621]/90"><CardHeader className="flex-row items-center justify-between border-b border-[#202b42] px-4 py-3"><div><CardTitle data-testid="market-structure-title" className="font-heading text-base text-slate-100">Market structure</CardTitle><p data-testid="market-structure-subtitle" className="mt-1 text-xs text-slate-500">What the chain is leaning toward</p></div><CircleHelp data-testid="market-structure-help" className="size-4 text-slate-600" /></CardHeader><CardContent className="space-y-4 p-4"><div className="flex items-center justify-between"><span data-testid="pcr-interpretation-label" className="text-xs text-slate-400">PCR interpretation</span><Badge data-testid="pcr-interpretation-badge" className="border-emerald-500/30 bg-emerald-500/10 text-[10px] text-emerald-300">{data && hasChainData ? data.structure.bias : "WAITING"}</Badge></div><div className="grid grid-cols-2 gap-3"><div className="rounded-lg border border-[#202b42] bg-[#0e131d] p-3"><p data-testid="structure-pcr-label" className="text-[10px] uppercase tracking-wider text-slate-500">PCR</p><p data-testid="structure-pcr-value" className="mt-2 font-mono text-lg font-bold text-white">{data && hasChainData ? data.structure.pcr.toFixed(2) : "—"}</p></div><div className="rounded-lg border border-[#202b42] bg-[#0e131d] p-3"><p data-testid="structure-max-pain-label" className="text-[10px] uppercase tracking-wider text-slate-500">Max pain</p><p data-testid="structure-max-pain-value" className="mt-2 font-mono text-lg font-bold text-white">{data && hasChainData ? formatInteger(data.structure.max_pain) : "—"}</p></div></div><div data-testid="oi-buildup-summary" className="rounded-lg border border-blue-500/20 bg-blue-500/5 px-3 py-3"><p data-testid="oi-buildup-label" className="text-[10px] uppercase tracking-wider text-blue-300/70">OI buildup</p><p data-testid="oi-buildup-value" className="mt-1 text-sm text-blue-100">{data?.structure.oi_buildup ?? "Waiting for option chain"}</p></div></CardContent></Card>
@@ -804,7 +803,7 @@ export default function Home({ isOwner = true }: { isOwner?: boolean }) {
               </form></CardContent>
             </Card>
 
-            <Card data-testid="claude-analyst-card" className="overflow-hidden border-[#315080]/60 bg-[#101621]/95 shadow-[0_16px_40px_rgba(28,74,135,0.12)]">
+            <Card id="ai" data-testid="claude-analyst-card" className="overflow-hidden border-[#315080]/60 bg-[#101621]/95 shadow-[0_16px_40px_rgba(28,74,135,0.12)]">
               <CardHeader className="flex-row items-center justify-between border-b border-[#202b42] px-4 py-3">
                 <div className="flex items-center gap-2.5"><div data-testid="claude-analyst-icon" className="flex size-8 items-center justify-center rounded-md bg-blue-500/10 text-blue-300"><Bot className="size-4" /></div><div><CardTitle data-testid="claude-analyst-title" className="font-heading text-base text-slate-100">Claude AI analyst</CardTitle><p data-testid="claude-analyst-model" className="mt-0.5 text-[10px] text-slate-500">Haiku 4.5 · streaming · read-only</p></div></div>
                 <Badge data-testid="claude-analyst-status" className={aiStatusQuery.data?.configured ? "border-blue-500/30 bg-blue-500/10 text-[10px] text-blue-300" : "border-amber-500/30 bg-amber-500/10 text-[10px] text-amber-300"}>{!aiStatusQuery.data?.configured ? "OFFLINE" : aiMutation.isPending ? "STREAMING" : "READY"}</Badge>
@@ -830,6 +829,10 @@ export default function Home({ isOwner = true }: { isOwner?: boolean }) {
 
             <Card data-testid="kotak-vault-card" className="border-[#202b42] bg-[#0e131d]/90"><CardContent className="p-4"><div className="flex items-start gap-3"><div className="flex size-8 shrink-0 items-center justify-center rounded-md bg-[#e31837]/10 text-[#f04a63]"><LockKeyhole className="size-4" /></div><div className="min-w-0"><p data-testid="kotak-vault-title" className="text-sm font-semibold text-slate-200">Kotak Neo vault boundary</p><p data-testid="kotak-vault-message" className="mt-1 text-xs leading-relaxed text-slate-500">{isOwner ? authMessage : "The owner manages the Kotak connection. You see the same live data."}</p></div></div>{isOwner && <Button data-testid="vault-connect-action" variant="outline" size="sm" className="mt-4 w-full border-[#2a364f] bg-transparent text-slate-300 hover:bg-[#171e2e]" onClick={() => setConnectOpen(true)}><KeyRound className="mr-2 size-3.5" />Review connection setup</Button>}</CardContent></Card>
           </div>
+        </section>
+
+        <section id="greeks" aria-label="Greeks" className="scroll-mt-4">
+          <GreeksLadder rows={visibleRows} spot={data && hasMarketTick ? data.spot.ltp : null} />
         </section>
 
         <footer data-testid="app-footer" className="flex flex-col gap-2 border-t border-[#1e2638] pt-4 text-[10px] text-slate-600 sm:flex-row sm:items-center sm:justify-between"><span data-testid="compliance-disclaimer">Read-only market analytics. Not investment advice. No orders are placed by this dashboard.</span>{isOwner && <button data-testid="demo-mode-toggle" type="button" className="flex items-center gap-1 text-indigo-400 transition-colors hover:text-indigo-300" onClick={() => setDemoOpen(true)}><RefreshCw className="size-3" />Keep DEMO mode enabled</button>}</footer>
