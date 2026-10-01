@@ -17,7 +17,7 @@ from lib.db import client, db, ensure_indexes
 from lib.feed_worker import feed_worker
 from lib.access import require_user
 from lib.settings import settings
-from routers import access, ai, auth, dashboard, public
+from routers import access, ai, auth, dashboard, live_signals, public, research_api
 
 
 # Startup runs before the yield, shutdown after it. Add your own setup/teardown here.
@@ -25,8 +25,14 @@ from routers import access, ai, auth, dashboard, public
 async def lifespan(app: FastAPI):
     app.state.index_task = asyncio.create_task(ensure_indexes())  # background: a big index build must not block boot
     app.state.feed_task = asyncio.create_task(feed_worker.run())
+    app.state.signal_task = asyncio.create_task(live_signals.runner.run()) if settings.mode == "LIVE" else None
     yield
-    app.state.feed_task.cancel()
+    for task in (app.state.signal_task, app.state.feed_task):
+        if task:
+            task.cancel()
+    if app.state.signal_task:
+        with suppress(asyncio.CancelledError):
+            await app.state.signal_task
     with suppress(asyncio.CancelledError):
         await app.state.feed_task
     client.close()
@@ -52,6 +58,8 @@ api_router.include_router(public.router)  # landing page: index prices and plan 
 api_router.include_router(auth.router, dependencies=signed_in)
 api_router.include_router(dashboard.router, dependencies=signed_in)
 api_router.include_router(ai.router, dependencies=signed_in)
+api_router.include_router(live_signals.router, dependencies=signed_in)
+api_router.include_router(research_api.router, dependencies=signed_in)
 
 # Include the router in the main app
 app.include_router(api_router)

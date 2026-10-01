@@ -4,6 +4,7 @@ import { Activity, Bell, Check, ChevronDown, CircleHelp, Cloud, Download, KeyRou
 import { toast } from "sonner";
 
 import AiAnalyst from "@/components/AiAnalyst";
+import { LiveSignalPanel, ResearchPanel } from "@/components/EnginePanels";
 import PreTradeChecks from "@/components/PreTradeChecks";
 import { DeskNav, GreeksLadder, IndexOverviewCard, MarketTicker, OptionChainTable, PcrOiCard } from "@/components/MarketDesk";
 import { Badge } from "@/components/ui/badge";
@@ -699,6 +700,8 @@ export default function Home({ isOwner = true }: { isOwner?: boolean }) {
           </div>
         </section>
 
+        <LiveSignalPanel symbol={symbol} />
+
         <IndexChartCard symbol={symbol} />
 
         <div id="indicators" className="scroll-mt-4">
@@ -746,6 +749,8 @@ export default function Home({ isOwner = true }: { isOwner?: boolean }) {
         <section id="checks" aria-label="Pre-trade checks" className="scroll-mt-4">
           <PreTradeChecks symbol={symbol} rows={data?.option_chain ?? []} expiry={data?.expiry} feedState={feedState} lastTick={data && hasMarketTick ? lastTickValue ?? null : null} />
         </section>
+
+        <ResearchPanel symbol={symbol} />
 
         <section id="ai" aria-label="AI analyst" className="scroll-mt-4">
           <AiAnalyst symbol={symbol} configured={Boolean(aiStatusQuery.data?.configured)} demo={modeLabel === "DEMO"} dataAsOf={data && hasChainData ? data.as_of : null} sessionId={aiSessionId} onEnableNotifications={enableNotifications} />
