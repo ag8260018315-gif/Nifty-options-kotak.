@@ -10,12 +10,6 @@ from zoneinfo import ZoneInfo
 
 IST = ZoneInfo("Asia/Kolkata")
 
-RULE_STATES = {
-    "BUY CALLS": "bullish alignment (PCR bullish and price rising over 5 and 15 minutes)",
-    "BUY PUTS": "bearish alignment (PCR bearish and price falling over 5 and 15 minutes)",
-    "WAIT": "no alignment",
-}
-
 # Wording that turns description into advice. Checked case-insensitively on whole words.
 ADVICE_PATTERNS = [
     r"\bbuy(?:ing)?\b",
@@ -53,7 +47,7 @@ def _clock(value: datetime | None) -> str | None:
     return moment.astimezone(IST).strftime("%H:%M:%S")
 
 
-def build_facts(snapshot: Any, plan: dict[str, Any] | None) -> dict[str, Any]:
+def build_facts(snapshot: Any, read: dict[str, Any] | None) -> dict[str, Any]:
     """Named facts for the prompt. Missing values are left out, never filled in."""
     facts: dict[str, Any] = {}
 
@@ -118,13 +112,13 @@ def build_facts(snapshot: Any, plan: dict[str, Any] | None) -> dict[str, Any]:
             put(f"atm_{side}_vega", getattr(leg, "vega", None))
         if atm.call.iv and atm.put.iv:
             put("atm_iv_gap_pe_minus_ce", round(atm.put.iv - atm.call.iv, 2))
-    if plan and plan.get("available"):
-        put("move_5m_points", plan.get("move_5m"))
-        put("move_15m_points", plan.get("move_15m"))
-        put("momentum", (plan.get("trend") or "").lower() or None)
-        put("rule_state", RULE_STATES.get(plan.get("signal", "WAIT"), "no alignment"))
-        put("range_15m_high", (plan.get("pe") or {}).get("index_stop"))
-        put("range_15m_low", (plan.get("ce") or {}).get("index_stop"))
+    if read and read.get("available"):
+        put("pcr_lean", (read.get("pcr_lean") or "").lower() or None)
+        put("move_5m_points", read.get("move_5m"))
+        put("move_15m_points", read.get("move_15m"))
+        put("momentum", (read.get("trend") or "").lower() or None)
+        put("range_15m_high", read.get("range_15m_high"))
+        put("range_15m_low", read.get("range_15m_low"))
     return facts
 
 

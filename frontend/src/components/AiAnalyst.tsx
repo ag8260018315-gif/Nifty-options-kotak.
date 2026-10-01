@@ -182,7 +182,7 @@ export default function AiAnalyst({ symbol, configured, demo, dataAsOf, sessionI
   const usage = usageQuery.data;
   const limitText = usage && usage.limit !== null && usage.remaining !== null ? `${usage.remaining} of ${usage.limit} questions left today` : null;
   const closedNote = cards && cards.feed_state !== "LIVE" && cards.feed_state !== "DEMO";
-  const label = action === "alert" ? "Notable change" : action === "summary" ? "Session summary" : action === "chat" ? "Answer" : "Signal explanation";
+  const label = action === "alert" ? "Notable change" : action === "summary" ? "Session summary" : action === "chat" ? "Answer" : "Explanation of the readings";
 
   return (
     <Card id="ai" data-testid="claude-analyst-card" className="overflow-hidden border-[#315080]/60 bg-[#101621]/95 shadow-[0_16px_40px_rgba(28,74,135,0.12)]">
@@ -239,7 +239,7 @@ export default function AiAnalyst({ symbol, configured, demo, dataAsOf, sessionI
             ))}
           </div>
           <div data-testid="claude-action-grid" className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-            <Button data-testid="claude-explain-button" type="button" variant="outline" size="sm" className="justify-start border-[#2a364f] bg-[#0e131d] text-slate-300" disabled={!configured || busy} onClick={() => askMutation.mutate({ action: "explain" })}><Sparkles className="mr-2 size-3.5 text-blue-300" />Explain signal</Button>
+            <Button data-testid="claude-explain-button" type="button" variant="outline" size="sm" className="justify-start border-[#2a364f] bg-[#0e131d] text-slate-300" disabled={!configured || busy} onClick={() => askMutation.mutate({ action: "explain" })}><Sparkles className="mr-2 size-3.5 text-blue-300" />Explain readings</Button>
             <Button data-testid="claude-summary-button" type="button" variant="outline" size="sm" className="justify-start border-[#2a364f] bg-[#0e131d] text-slate-300" disabled={!configured || busy} onClick={() => askMutation.mutate({ action: "summary" })}><FileText className="mr-2 size-3.5 text-blue-300" />Daily summary</Button>
             <Button data-testid="claude-alert-button" type="button" variant="outline" size="sm" className="justify-start border-amber-500/25 bg-amber-500/5 text-amber-200" disabled={!configured || busy} onClick={() => askMutation.mutate({ action: "alert" })}><Bell className="mr-2 size-3.5" />Notable change</Button>
             <Button data-testid="claude-notifications-button" type="button" variant="outline" size="sm" className="justify-start border-[#2a364f] bg-[#0e131d] text-slate-400" onClick={onEnableNotifications}><Bell className="mr-2 size-3.5" />Enable notify</Button>

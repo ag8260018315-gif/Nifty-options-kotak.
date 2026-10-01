@@ -70,8 +70,8 @@ def demo_snapshot(symbol: str) -> DashboardSnapshot:
             oi_buildup=buildup,
         ),
         signal=SignalSnapshot(
-            recommendation="BUY CALLS" if pcr >= 1.05 else "WAIT",
-            confidence=72 if pcr >= 1.05 else 58,
+            recommendation="PUT-HEAVY" if pcr >= 1.05 else "CALL-HEAVY" if pcr <= 0.85 else "BALANCED",
+            confidence=0,
             reasons=[
                 "Put OI concentration above spot",
                 "Call writing capped at the next resistance band",

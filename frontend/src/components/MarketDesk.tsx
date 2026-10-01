@@ -181,7 +181,7 @@ const SECTIONS: { id: string; label: string }[] = [
   { id: "overview", label: "Overview" },
   { id: "option-chain", label: "Option chain" },
   { id: "greeks", label: "Greeks" },
-  { id: "signals", label: "Signals" },
+  { id: "indicators", label: "Indicators" },
   { id: "ai", label: "AI analyst" },
   { id: "export", label: "Export" },
 ];

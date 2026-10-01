@@ -458,7 +458,7 @@ class MultiIndexFeedWorker:
         pcr = round(put_oi / call_oi, 2) if call_oi else 0.0
         max_pain = min((row.strike for row in rows), key=lambda settlement: sum(max(settlement - row.strike, 0) * row.call.oi + max(row.strike - settlement, 0) * row.put.oi for row in rows))
         bias = "BULLISH" if pcr >= 1.05 else "BEARISH" if pcr <= 0.85 else "NEUTRAL"
-        recommendation = "BUY CALLS" if bias == "BULLISH" else "BUY PUTS" if bias == "BEARISH" else "WAIT"
+        recommendation = "PUT-HEAVY" if bias == "BULLISH" else "CALL-HEAVY" if bias == "BEARISH" else "BALANCED"  # describes PCR positioning only
         close = float(runtime.index_tick.get("close", 0))
         day_open = runtime.index_tick.get("open")
         today = runtime.last_tick.astimezone(IST).date()
@@ -470,7 +470,7 @@ class MultiIndexFeedWorker:
             spot=SpotSnapshot(symbol=symbol, ltp=spot, change=round(spot - close, 2) if close else 0, pct_change=float(runtime.index_tick.get("change_pct", 0)), high=float(runtime.index_tick.get("high", spot)), low=float(runtime.index_tick.get("low", spot)), timestamp=runtime.last_tick, open=float(day_open) if day_open else None, prev_close=close or None),
             option_chain=rows,
             structure=MarketStructure(pcr=pcr, max_pain=max_pain, bias=bias, oi_buildup=f"Live OI: {put_oi:,} puts vs {call_oi:,} calls", total_call_oi=call_oi, total_put_oi=put_oi, window_strikes=len(rows), pcr_start=runtime.pcr_start, pcr_start_at=runtime.pcr_start_at),
-            signal=SignalSnapshot(recommendation=recommendation, confidence=min(85, 55 + int(abs(pcr - 1) * 100)), reasons=[f"Live PCR is {pcr:.2f}", f"Calculated max pain is {max_pain}", f"Spot is {spot:,.2f} with ATM at {runtime.current_atm}"], timestamp=runtime.last_tick),
+            signal=SignalSnapshot(recommendation=recommendation, confidence=0, reasons=[f"Live PCR is {pcr:.2f}", f"Calculated max pain is {max_pain}", f"Spot is {spot:,.2f} with ATM at {runtime.current_atm}"], timestamp=runtime.last_tick),
             feed=FeedHealth(state=self.state_for(symbol), source="KOTAK_NEO", last_tick=runtime.last_tick, heartbeat_ms=max(0, int((datetime.now(UTC) - runtime.last_tick).total_seconds() * 1000)), subscriptions=self.subscription_count, divider_status="VERIFIED" if self.divider_verified else "PENDING"),
             as_of=runtime.last_tick,
         )

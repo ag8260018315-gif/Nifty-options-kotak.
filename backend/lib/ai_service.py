@@ -35,7 +35,7 @@ from lib.candles import candle_store
 from lib.db import db
 from lib.kotak_adapter import demo_snapshot
 from lib.settings import settings
-from lib.trade_plan import build_trade_plan
+from lib.market_read import build_market_read
 from models.ai import AiAnalysisRequest
 from models.dashboard import DashboardSnapshot
 
@@ -68,7 +68,7 @@ Rules:
   differently. If something is not in the data, say it is not available.
 - Never recommend or imply a trade. Do not use the words buy, sell, target, stop loss, entry, exit, go long or go short.
   Say "call writing" or "put writing" instead of "selling". Never predict future prices ("will rise", "will reach").
-- rule_state is the dashboard's fixed PCR-and-momentum rule. Describe it as a rule's current state, never as advice.
+- pcr_lean, momentum and the 15 minute range are plain readings. Describe them; never turn them into a view on what to do or where price is going.
 - iv, delta, gamma, theta and vega are Black-Scholes model estimates, not exchange figures.
 - OI totals and PCR cover only the strikes in the dashboard's ATM window, not the full option chain.
 - If feed_state is not LIVE, say the data may not be current and give data_time_ist.
@@ -196,8 +196,8 @@ async def _context(symbol: str) -> tuple[DashboardSnapshot, dict[str, Any], list
         candles = (await candle_store.get(symbol, 1))["candles"]
     except Exception:  # noqa: BLE001
         candles = []
-    plan = build_trade_plan(snapshot, candles, snapshot.feed.state)
-    facts = build_facts(snapshot, plan)
+    read = build_market_read(snapshot, candles, snapshot.feed.state)
+    facts = build_facts(snapshot, read)
     if "spot" not in facts or "pcr" not in facts:
         raise AiUserError("The option chain isn't complete yet, so there's nothing reliable to analyze.")
     rows = compact_rows(snapshot)
@@ -275,7 +275,7 @@ def _problems_note(problems: dict[str, list[str]]) -> str:
 # ------------------------------------------------------------------ answers
 def _task(action: str, message: str | None) -> str:
     if action == "explain":
-        return "Explain the current rule_state: which facts (PCR, 5 and 15 minute moves) put the rule in this state, and what would have to change for it to move."
+        return "Explain the current readings: what PCR says about open interest positioning, what the 5 and 15 minute moves and the 15 minute range say about recent price action, and where the readings point the same way or differ. Describe only."
     if action == "summary":
         return "Summarize the session so far: price action, open interest positioning, volatility, and the main uncertainty in the data."
     if action == "alert":

@@ -133,8 +133,8 @@ class MarketStructure(BaseModel):
 
 
 class SignalSnapshot(BaseModel):
-    recommendation: Literal["BUY CALLS", "BUY PUTS", "WAIT"]
-    confidence: int
+    recommendation: str  # a neutral PCR description; older saved snapshots may hold legacy words
+    confidence: int = 0  # no longer calculated or shown
     reasons: list[str]
     timestamp: datetime | None
 

@@ -99,7 +99,7 @@ const FAQ: { q: string; a: string }[] = [
   { q: "What does the AI analyst do?", a: "Claude reads the same data shown on your dashboard and explains it in plain language. It separates what the data shows from its interpretation, and it can be wrong." },
   { q: "What happens after the free trial?", a: "Access pauses and you can ask to continue from the same screen. Online payment isn't live yet, so nothing is charged." },
   { q: "Does it place trades?", a: "No. The desk is read-only. It never places, changes or cancels orders." },
-  { q: "Is this investment advice?", a: "No. It's an information tool. Signals follow fixed rules and can be wrong, so check price, liquidity and risk yourself." },
+  { q: "Is this investment advice?", a: "No. It's an information tool. Indicators are calculated by fixed formulas and can be misleading, so check price, liquidity and risk yourself." },
 ];
 
 const priceFormat = new Intl.NumberFormat("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -674,7 +674,7 @@ export default function Landing({ onSignedIn }: { onSignedIn: () => void }) {
           <div className="flex flex-col gap-3 border-t border-white/[0.06] pt-10 sm:flex-row sm:items-end sm:justify-between">
             <div>
               <h2 id="markets-title" className="font-heading text-[26px] font-semibold tracking-tight">Live markets</h2>
-              <p className="mt-1.5 text-[14px] text-[#8c98ae]">Index prices from the Kotak Neo feed. Option chains, Greeks and signals are inside the desk.</p>
+              <p className="mt-1.5 text-[14px] text-[#8c98ae]">Index prices from the Kotak Neo feed. Option chains, Greeks and analytics are inside the desk.</p>
             </div>
             <dl data-testid="market-status-meta" className="flex flex-wrap gap-x-6 gap-y-1 text-[13px]">
               <div className="flex gap-1.5"><dt className="text-[#6b778d]">Status</dt><dd className={summary.tone}>{summary.label}</dd></div>
@@ -786,7 +786,7 @@ export default function Landing({ onSignedIn }: { onSignedIn: () => void }) {
       <footer className="border-t border-white/[0.06]">
         <div className="mx-auto flex max-w-[1280px] flex-col gap-4 px-5 py-8 text-[12.5px] leading-relaxed text-[#5f6c84] sm:px-8 md:flex-row md:items-start md:justify-between">
           <p className="max-w-[80ch]">
-            For information only, not investment advice. Signals follow fixed rules and can be wrong; check price, liquidity and risk before any trade. Greeks are model estimates. Uses the Kotak Neo API and is not affiliated with or endorsed by Kotak Securities.
+            For information only, not investment advice. Indicators are calculated by fixed formulas and can be misleading; check price, liquidity and risk before any trade. Greeks are model estimates. Uses the Kotak Neo API and is not affiliated with or endorsed by Kotak Securities.
           </p>
           <p className="shrink-0">NIFTY Options Desk</p>
         </div>
