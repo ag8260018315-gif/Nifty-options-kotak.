@@ -182,6 +182,7 @@ const SECTIONS: { id: string; label: string }[] = [
   { id: "option-chain", label: "Option chain" },
   { id: "greeks", label: "Greeks" },
   { id: "indicators", label: "Indicators" },
+  { id: "checks", label: "Pre-trade checks" },
   { id: "ai", label: "AI analyst" },
   { id: "export", label: "Export" },
 ];

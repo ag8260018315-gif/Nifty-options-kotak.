@@ -4,6 +4,7 @@ import { Activity, Bell, Check, ChevronDown, CircleHelp, Cloud, Download, KeyRou
 import { toast } from "sonner";
 
 import AiAnalyst from "@/components/AiAnalyst";
+import PreTradeChecks from "@/components/PreTradeChecks";
 import { DeskNav, GreeksLadder, IndexOverviewCard, MarketTicker, OptionChainTable, PcrOiCard } from "@/components/MarketDesk";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -740,6 +741,10 @@ export default function Home({ isOwner = true }: { isOwner?: boolean }) {
 
         <section id="greeks" aria-label="Greeks" className="scroll-mt-4">
           <GreeksLadder rows={visibleRows} spot={data && hasMarketTick ? data.spot.ltp : null} />
+        </section>
+
+        <section id="checks" aria-label="Pre-trade checks" className="scroll-mt-4">
+          <PreTradeChecks symbol={symbol} rows={data?.option_chain ?? []} expiry={data?.expiry} feedState={feedState} lastTick={data && hasMarketTick ? lastTickValue ?? null : null} />
         </section>
 
         <section id="ai" aria-label="AI analyst" className="scroll-mt-4">
