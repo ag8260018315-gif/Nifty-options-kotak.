@@ -35,6 +35,14 @@ export const GROUPS: Group[] = [
     ],
   },
   {
+    name: "Signals and research",
+    features: [
+      { title: "How it works", brief: "An animated picture of the two engines: research tunes the settings from past data, and the live engine turns today's market into a signal.", target: "how", where: "How it works" },
+      { title: "Live signal", brief: "A CE or PE signal with the chosen strike, stop and target, built only from current data. It shows its own confidence, and is blocked if the data is stale or from the future.", target: "signals", where: "Live signal" },
+      { title: "Research and validation", brief: "Past candles are used to tune and test the rules on days they were not tuned on. The result is the historical validated accuracy, a separate number from live confidence.", target: "research", where: "Research" },
+    ],
+  },
+  {
     name: "Analysis and checks",
     features: [
       { title: "Market readings", brief: "PCR lean, the last 5 and 15 minute moves and the 15 minute high and low, shown as plain readings. No recommendation.", target: "indicators", where: "Indicators" },

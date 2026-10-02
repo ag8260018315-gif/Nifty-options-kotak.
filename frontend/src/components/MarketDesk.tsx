@@ -179,10 +179,13 @@ function stateText(state: string) {
 // ------------------------------------------------------------------ section menu
 const SECTIONS: { id: string; label: string }[] = [
   { id: "overview", label: "Overview" },
+  { id: "how", label: "How it works" },
+  { id: "signals", label: "Live signal" },
   { id: "option-chain", label: "Option chain" },
   { id: "greeks", label: "Greeks" },
   { id: "indicators", label: "Indicators" },
   { id: "checks", label: "Pre-trade checks" },
+  { id: "research", label: "Research" },
   { id: "ai", label: "AI analyst" },
   { id: "export", label: "Export" },
   { id: "guide", label: "Guide" },

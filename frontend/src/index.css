@@ -152,3 +152,31 @@
 .scanline { animation: scanline 5s linear infinite; }
 .data-hover { transition: background-color 160ms ease, border-color 160ms ease, color 160ms ease, transform 160ms ease; }
 .data-hover:hover { transform: translateY(-1px); }
+
+/* Engine overview animations (see components/EngineOverview.tsx). All stop for reduced-motion users. */
+@keyframes eo-flow {
+  0% { left: 0; opacity: 0; }
+  15% { opacity: 1; }
+  85% { opacity: 1; }
+  100% { left: calc(100% - 6px); opacity: 0; }
+}
+@keyframes eo-step {
+  0%, 12%, 100% { border-color: #202b42; background-color: #090d15; }
+  4% { border-color: rgba(52, 211, 153, 0.7); background-color: rgba(16, 185, 129, 0.10); }
+}
+@keyframes eo-fill {
+  from { width: 0; }
+  to { width: var(--w); }
+}
+@keyframes eo-rise {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.eo-flow { animation: eo-flow 2.4s linear infinite; }
+.eo-step { animation: eo-step 7s ease-in-out infinite; }
+.eo-fill { animation: eo-fill 1.4s ease-out both; width: var(--w); }
+.eo-card { animation: eo-rise 0.5s ease-out both; }
+@media (prefers-reduced-motion: reduce) {
+  .eo-flow, .eo-step, .eo-fill, .eo-card { animation: none; }
+  .eo-flow { display: none; }
+}
