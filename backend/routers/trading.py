@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, Query
 from lib.access import require_admin
 from lib.db import live_db
 from routers.live_signals import provide_inputs, runner as signal_runner
-from trading import store
+from trading import engine, store
 from trading.brokers import BrokerNotVerified, build_broker
 from trading.runner import AutoTrader
 from trading.settings import TradingSettings
@@ -27,8 +27,9 @@ async def status() -> dict:
     killed, reason = await store.is_killed(live_db)
     day = await store.day_summary(live_db, datetime.now(timezone.utc))
     day.pop("signal_ids")
+    realised, open_cost = await store.account_totals(live_db)
     return {"label": "AUTO-TRADER", "mode": settings.mode, "real_orders": False, "broker_error": broker_error, "killed": killed, "kill_reason": reason,
-            "settings": settings.public(), "today": day, "open_positions": await store.open_trades(live_db)}
+            "settings": settings.public(), "today": day, "account": engine.account(settings.start_capital, realised, open_cost), "open_positions": await store.open_trades(live_db)}
 
 
 @router.get("/trades")

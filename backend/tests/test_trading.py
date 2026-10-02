@@ -122,3 +122,27 @@ async def test_kill_switch_closes_positions_and_blocks_entries():
     t = await db.auto_trades.find_one({})
     assert t["status"] == "CLOSED" and t["exit_reason"] == "KILL_SWITCH"
     assert await db.auto_trades.count_documents({}) == 1
+
+
+def test_account_and_affordability():
+    a = engine.account(20000, -1500.0, 7500.0)
+    assert a == {"start_capital": 20000, "realised_pnl": -1500.0, "equity": 18500.0, "available": 11000.0, "return_pct": -7.5}
+    assert engine.can_afford(0, 0, 1e9, 75)  # no capital set: no limit
+    assert engine.can_afford(20000, 11000, 100.0, 75)
+    assert not engine.can_afford(20000, 5000, 100.0, 75)
+
+
+async def test_trade_skipped_when_practice_cash_is_too_small():
+    db = AsyncMongoMockClient()["live"]
+    inputs = uptrend_inputs()
+    sig = signal(inputs)
+
+    async def provider(symbol):
+        return inputs
+
+    small = replace(S, start_capital=1000.0)  # one lot costs several thousand
+    await AutoTrader(db, provider, {"NIFTY": sig}, PaperBroker(small), small).step("NIFTY", AS_OF + timedelta(seconds=2))
+    assert await db.auto_trades.count_documents({}) == 0
+    big = replace(S, start_capital=500000.0)
+    await AutoTrader(db, provider, {"NIFTY": sig}, PaperBroker(big), big).step("NIFTY", AS_OF + timedelta(seconds=2))
+    assert await db.auto_trades.count_documents({}) == 1

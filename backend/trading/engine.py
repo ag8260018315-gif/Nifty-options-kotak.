@@ -71,3 +71,17 @@ def exit_reason(position: dict[str, Any], quote: float, now: datetime, settings:
 def close_position(position: dict[str, Any], fill: float, reason: str, now: datetime) -> dict[str, Any]:
     pnl = round((fill - position["entry_premium"]) * position["quantity"], 2)
     return {**position, "status": "CLOSED", "exit_premium": fill, "exit_reason": reason, "closed_at": now.isoformat(), "pnl": pnl}
+
+
+def account(start_capital: float, realised_pnl: float, open_cost: float) -> dict[str, Any]:
+    """Practice account: cash left to open new trades, and the total value if open trades were held at cost."""
+    equity = start_capital + realised_pnl
+    return {
+        "start_capital": start_capital, "realised_pnl": round(realised_pnl, 2), "equity": round(equity, 2),
+        "available": round(equity - open_cost, 2), "return_pct": round(realised_pnl / start_capital * 100, 2) if start_capital else None,
+    }
+
+
+def can_afford(start_capital: float, available: float, fill: float, quantity: int) -> bool:
+    """With no capital set there is no limit; otherwise the buy must fit in the cash that is free."""
+    return start_capital <= 0 or fill * quantity <= available

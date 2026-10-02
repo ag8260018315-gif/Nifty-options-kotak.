@@ -21,6 +21,7 @@ class TradingSettings:
     max_daily_loss: float = 2000.0  # rupees; entries stop once the day's realised loss reaches this
     slippage_pct: float = 0.5  # paper fills are this much worse than the quoted premium
     squareoff_time: str = "15:15"  # IST; open positions are closed at/after this time
+    start_capital: float = 0.0  # practice account size in rupees; 0 = no balance tracking or affordability check
     live_confirmed: bool = False
 
     @staticmethod
@@ -36,6 +37,7 @@ class TradingSettings:
             max_daily_loss=max(0.0, _num("TRADING_MAX_DAILY_LOSS", 2000)),
             slippage_pct=min(5.0, max(0.0, _num("TRADING_SLIPPAGE_PCT", 0.5))),
             squareoff_time=os.environ.get("TRADING_SQUAREOFF", "15:15"),
+            start_capital=max(0.0, _num("TRADING_START_CAPITAL", 0)),
             live_confirmed=os.environ.get("TRADING_LIVE_CONFIRM", "") == "I_ACCEPT_REAL_MONEY_RISK",
         )
 
