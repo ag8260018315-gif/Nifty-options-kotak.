@@ -49,3 +49,13 @@ async def run_research(request: RunRequest) -> dict[str, Any]:
         save_config(EngineConfig.model_validate(report["config"]))
         report["config_written"] = True
     return {"label": LABEL, **report}
+
+
+@router.post("/apply", dependencies=[Depends(require_admin)])
+async def apply_latest(symbol: IndexSymbol = Query(default="NIFTY")) -> dict[str, Any]:
+    """Writes the latest successful research result to config.json (the live engine reads it on its next cycle)."""
+    latest = await store.latest_optimization(research_db, symbol)
+    if not latest or latest.get("status") != "OK" or not latest.get("config"):
+        raise HTTPException(status_code=409, detail="No successful research result to apply yet.")
+    save_config(EngineConfig.model_validate(latest["config"]))
+    return {"applied": True, "run_id": latest["run_id"], "validation": latest["validation"]}

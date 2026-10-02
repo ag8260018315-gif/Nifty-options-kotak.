@@ -13,10 +13,11 @@ ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
 
 # MongoDB connection
-from lib.db import client, db, ensure_indexes
+from lib.db import client, db, ensure_indexes, live_db, research_db
 from lib.feed_worker import feed_worker
 from lib.access import require_user
 from lib.settings import settings
+from jobs.research_scheduler import run_forever as research_job
 from routers import access, ai, auth, dashboard, live_signals, public, research_api, trading
 
 
@@ -27,11 +28,12 @@ async def lifespan(app: FastAPI):
     app.state.feed_task = asyncio.create_task(feed_worker.run())
     app.state.signal_task = asyncio.create_task(live_signals.runner.run()) if settings.mode == "LIVE" else None
     app.state.trade_task = asyncio.create_task(trading.trader.run()) if settings.mode == "LIVE" and trading.trader and trading.settings.mode != "OFF" else None
+    app.state.research_task = asyncio.create_task(research_job(live_db, research_db))
     yield
-    for task in (app.state.trade_task, app.state.signal_task, app.state.feed_task):
+    for task in (app.state.research_task, app.state.trade_task, app.state.signal_task, app.state.feed_task):
         if task:
             task.cancel()
-    for task in (app.state.trade_task, app.state.signal_task):
+    for task in (app.state.research_task, app.state.trade_task, app.state.signal_task):
         if task:
             with suppress(asyncio.CancelledError):
                 await task
