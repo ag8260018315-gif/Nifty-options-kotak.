@@ -31,4 +31,3 @@ python-multipart>=0.0.9
 jq>=1.6.0
 typer>=0.9.0
 kotakneoapi>=3.0.1,<4
-mongomock-motor>=0.0.30

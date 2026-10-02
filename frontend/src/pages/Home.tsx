@@ -4,8 +4,9 @@ import { Activity, Bell, Check, ChevronDown, CircleHelp, Cloud, Download, KeyRou
 import { toast } from "sonner";
 
 import AiAnalyst from "@/components/AiAnalyst";
-import { LiveSignalPanel, ResearchPanel } from "@/components/EnginePanels";
+import OrderBlockPanel from "@/components/OrderBlockPanel";
 import PreTradeChecks from "@/components/PreTradeChecks";
+import { detectMarkers } from "@/lib/orderblocks";
 import { DeskNav, GreeksLadder, IndexOverviewCard, MarketTicker, OptionChainTable, PcrOiCard } from "@/components/MarketDesk";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -326,6 +327,7 @@ function signedPoints(value: number | null) {
 
 function IndexChartCard({ symbol }: { symbol: IndexSymbol }) {
   const [chartInterval, setChartInterval] = useState<ChartInterval>(1);
+  const [showMarkers, setShowMarkers] = useState(true);
   const candlesQuery = useQuery({
     queryKey: ["candles", symbol],
     queryFn: () => fetchCandles(symbol),
@@ -334,6 +336,7 @@ function IndexChartCard({ symbol }: { symbol: IndexSymbol }) {
   });
   const oneMinute = candlesQuery.data?.candles ?? [];
   const candles = useMemo(() => resampleCandles(oneMinute.map((candle) => ({ ...candle })), chartInterval).slice(-120), [oneMinute, chartInterval]);
+  const detection = useMemo(() => detectMarkers(candles), [candles]);
   const move5 = changeSince(oneMinute, 5 * 60);
   const move15 = changeSince(oneMinute, 15 * 60);
   const trend = move5 === null || move15 === null ? "Building" : move5 > 0 && move15 > 0 ? "Rising" : move5 < 0 && move15 < 0 ? "Falling" : "Mixed";
@@ -386,48 +389,67 @@ function IndexChartCard({ symbol }: { symbol: IndexSymbol }) {
           <div className="rounded-md border border-[#202b42] bg-[#090d15] px-3 py-2"><p className="text-[9px] uppercase tracking-[0.14em] text-slate-500">Last 15 min</p><p data-testid="index-momentum-15m" className={`mt-1 font-mono text-sm font-semibold ${move15 !== null && move15 < 0 ? "text-rose-300" : "text-emerald-300"}`}>{signedPoints(move15)}</p></div>
           <div className="rounded-md border border-[#202b42] bg-[#090d15] px-3 py-2"><p className="text-[9px] uppercase tracking-[0.14em] text-slate-500">In day range</p><p data-testid="index-momentum-range" className="mt-1 font-mono text-sm font-semibold text-slate-200">{rangePosition === null ? "—" : `${rangePosition}%`}</p></div>
         </div>
-        {candles.length === 0 ? (
-          <div data-testid="index-chart-empty" className="flex h-48 items-center justify-center rounded-lg border border-dashed border-[#202b42] text-center text-xs text-slate-500">{candlesQuery.isError ? "Chart data is unavailable right now." : candlesQuery.data?.note ?? "Loading chart…"}<br />Candles appear once live index ticks arrive (09:15–15:30 IST).</div>
-        ) : (
-          <div className="overflow-x-auto">
-            <svg data-testid="index-chart-svg" viewBox={`0 0 ${width} ${height}`} className="h-60 w-full min-w-[560px]" role="img" aria-label={`${symbol} ${chartInterval}-minute candles`}>
-              {[0, 0.25, 0.5, 0.75, 1].map((fraction) => {
-                const price = high - span * fraction;
-                const lineY = padTop + plotHeight * fraction;
-                return (
-                  <g key={fraction}>
-                    <line x1={0} x2={plotWidth} y1={lineY} y2={lineY} stroke="#1a2336" strokeWidth={1} />
-                    <text x={plotWidth + 6} y={lineY + 3} fontSize={10} fill="#64748b" fontFamily="monospace">{formatPrice(price)}</text>
-                  </g>
-                );
-              })}
-              {candles.map((candle, index) => {
-                const center = index * slot + slot / 2;
-                const rising = candle.close >= candle.open;
-                const color = rising ? "#34d399" : "#fb7185";
-                const top = y(Math.max(candle.open, candle.close));
-                const bottom = y(Math.min(candle.open, candle.close));
-                return (
-                  <g key={candle.time}>
-                    <title>{`${istClock(candle.time)}  O ${formatPrice(candle.open)}  H ${formatPrice(candle.high)}  L ${formatPrice(candle.low)}  C ${formatPrice(candle.close)}`}</title>
-                    <line x1={center} x2={center} y1={y(candle.high)} y2={y(candle.low)} stroke={color} strokeWidth={1} />
-                    <rect x={center - bodyWidth / 2} y={top} width={bodyWidth} height={Math.max(1, bottom - top)} fill={color} />
-                  </g>
-                );
-              })}
-              {last && (
-                <g>
-                  <line x1={0} x2={plotWidth} y1={y(last.close)} y2={y(last.close)} stroke="#60a5fa" strokeWidth={1} strokeDasharray="4 4" />
-                  <rect x={plotWidth + 2} y={y(last.close) - 8} width={padRight - 4} height={16} rx={3} fill="#1d4ed8" />
-                  <text x={plotWidth + 6} y={y(last.close) + 4} fontSize={10} fill="#ffffff" fontFamily="monospace">{formatPrice(last.close)}</text>
-                </g>
-              )}
-              {labelTimes.map((label) => (
-                <text key={label.index} x={Math.min(plotWidth - 30, Math.max(0, label.index * slot))} y={height - 6} fontSize={10} fill="#64748b" fontFamily="monospace">{istClock(label.time)}</text>
-              ))}
-            </svg>
+        <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_300px]">
+          <div className="min-w-0">
+            {candles.length === 0 ? (
+              <div data-testid="index-chart-empty" className="flex h-48 items-center justify-center rounded-lg border border-dashed border-[#202b42] text-center text-xs text-slate-500">{candlesQuery.isError ? "Chart data is unavailable right now." : candlesQuery.data?.note ?? "Loading chart…"}<br />Candles appear once live index ticks arrive (09:15–15:30 IST).</div>
+            ) : (
+              <div className="overflow-x-auto">
+                <svg data-testid="index-chart-svg" viewBox={`0 0 ${width} ${height}`} className="h-60 w-full min-w-[560px]" role="img" aria-label={`${symbol} ${chartInterval}-minute candles`}>
+                  {[0, 0.25, 0.5, 0.75, 1].map((fraction) => {
+                    const price = high - span * fraction;
+                    const lineY = padTop + plotHeight * fraction;
+                    return (
+                      <g key={fraction}>
+                        <line x1={0} x2={plotWidth} y1={lineY} y2={lineY} stroke="#1a2336" strokeWidth={1} />
+                        <text x={plotWidth + 6} y={lineY + 3} fontSize={10} fill="#64748b" fontFamily="monospace">{formatPrice(price)}</text>
+                      </g>
+                    );
+                  })}
+                  {showMarkers && detection.markers.map((marker) => {
+                    const left = marker.index * slot;
+                    const right = Math.min(plotWidth, (marker.endIndex === null ? candles.length : marker.endIndex + 1) * slot);
+                    const top = y(marker.high);
+                    const bottom = y(marker.low);
+                    const closed = marker.status === "closed-through";
+                    return (
+                      <g key={`marker-${marker.id}`} data-testid={`order-marker-${marker.id}`}>
+                        <title>{`Marker ${marker.id}: ${marker.kind === "up-move" ? "down candle before an up-move" : "up candle before a down-move"}, ${formatPrice(marker.low)} to ${formatPrice(marker.high)}`}</title>
+                        <rect x={left} y={top} width={Math.max(2, right - left)} height={Math.max(1, bottom - top)} fill="#8b5cf6" fillOpacity={closed ? 0.05 : 0.14} stroke="#8b5cf6" strokeOpacity={closed ? 0.25 : 0.65} strokeDasharray="3 3" />
+                        <text x={left + 2} y={Math.max(10, top - 3)} fontSize={9} fill="#c4b5fd" fontFamily="monospace">{marker.id}</text>
+                      </g>
+                    );
+                  })}
+                  {candles.map((candle, index) => {
+                    const center = index * slot + slot / 2;
+                    const rising = candle.close >= candle.open;
+                    const color = rising ? "#34d399" : "#fb7185";
+                    const top = y(Math.max(candle.open, candle.close));
+                    const bottom = y(Math.min(candle.open, candle.close));
+                    return (
+                      <g key={candle.time}>
+                        <title>{`${istClock(candle.time)}  O ${formatPrice(candle.open)}  H ${formatPrice(candle.high)}  L ${formatPrice(candle.low)}  C ${formatPrice(candle.close)}`}</title>
+                        <line x1={center} x2={center} y1={y(candle.high)} y2={y(candle.low)} stroke={color} strokeWidth={1} />
+                        <rect x={center - bodyWidth / 2} y={top} width={bodyWidth} height={Math.max(1, bottom - top)} fill={color} />
+                      </g>
+                    );
+                  })}
+                  {last && (
+                    <g>
+                      <line x1={0} x2={plotWidth} y1={y(last.close)} y2={y(last.close)} stroke="#60a5fa" strokeWidth={1} strokeDasharray="4 4" />
+                      <rect x={plotWidth + 2} y={y(last.close) - 8} width={padRight - 4} height={16} rx={3} fill="#1d4ed8" />
+                      <text x={plotWidth + 6} y={y(last.close) + 4} fontSize={10} fill="#ffffff" fontFamily="monospace">{formatPrice(last.close)}</text>
+                    </g>
+                  )}
+                  {labelTimes.map((label) => (
+                    <text key={label.index} x={Math.min(plotWidth - 30, Math.max(0, label.index * slot))} y={height - 6} fontSize={10} fill="#64748b" fontFamily="monospace">{istClock(label.time)}</text>
+                  ))}
+                </svg>
+              </div>
+            )}
           </div>
-        )}
+          <OrderBlockPanel symbol={symbol} intervalLabel={`${chartInterval}-minute`} detection={detection} hasCandles={candles.length > 0} lastPrice={last ? last.close : null} enabled={showMarkers} onToggle={setShowMarkers} />
+        </div>
         <p data-testid="index-chart-disclaimer" className="text-[10px] leading-relaxed text-slate-600">Momentum is a plain price-change readout, not advice. The chart starts when the server first receives live index ticks each day.</p>
       </CardContent>
     </Card>
@@ -700,8 +722,6 @@ export default function Home({ isOwner = true }: { isOwner?: boolean }) {
           </div>
         </section>
 
-        <LiveSignalPanel symbol={symbol} />
-
         <IndexChartCard symbol={symbol} />
 
         <div id="indicators" className="scroll-mt-4">
@@ -749,8 +769,6 @@ export default function Home({ isOwner = true }: { isOwner?: boolean }) {
         <section id="checks" aria-label="Pre-trade checks" className="scroll-mt-4">
           <PreTradeChecks symbol={symbol} rows={data?.option_chain ?? []} expiry={data?.expiry} feedState={feedState} lastTick={data && hasMarketTick ? lastTickValue ?? null : null} />
         </section>
-
-        <ResearchPanel symbol={symbol} />
 
         <section id="ai" aria-label="AI analyst" className="scroll-mt-4">
           <AiAnalyst symbol={symbol} configured={Boolean(aiStatusQuery.data?.configured)} demo={modeLabel === "DEMO"} dataAsOf={data && hasChainData ? data.as_of : null} sessionId={aiSessionId} onEnableNotifications={enableNotifications} />
