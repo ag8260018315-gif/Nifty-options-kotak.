@@ -4,6 +4,7 @@ import { Activity, Bell, Check, ChevronDown, CircleHelp, Cloud, Download, KeyRou
 import { toast } from "sonner";
 
 import AiAnalyst from "@/components/AiAnalyst";
+import FeatureGuide from "@/components/FeatureGuide";
 import OrderBlockPanel from "@/components/OrderBlockPanel";
 import PreTradeChecks from "@/components/PreTradeChecks";
 import { detectMarkers } from "@/lib/orderblocks";
@@ -722,7 +723,9 @@ export default function Home({ isOwner = true }: { isOwner?: boolean }) {
           </div>
         </section>
 
-        <IndexChartCard symbol={symbol} />
+        <div id="chart" className="scroll-mt-4">
+          <IndexChartCard symbol={symbol} />
+        </div>
 
         <div id="indicators" className="scroll-mt-4">
           <MarketReadCard symbol={symbol} />
@@ -749,7 +752,7 @@ export default function Home({ isOwner = true }: { isOwner?: boolean }) {
           <div className="space-y-4">
             <Card data-testid="market-structure-card" className="border-[#202b42] bg-[#101621]/90"><CardHeader className="flex-row items-center justify-between border-b border-[#202b42] px-4 py-3"><div><CardTitle data-testid="market-structure-title" className="font-heading text-base text-slate-100">Market structure</CardTitle><p data-testid="market-structure-subtitle" className="mt-1 text-xs text-slate-500">Where open interest sits</p></div><CircleHelp data-testid="market-structure-help" className="size-4 text-slate-600" /></CardHeader><CardContent className="space-y-4 p-4"><div className="flex items-center justify-between"><span data-testid="pcr-interpretation-label" className="text-xs text-slate-400">PCR reading</span><Badge data-testid="pcr-interpretation-badge" className="border-slate-500/30 bg-slate-500/10 text-[10px] text-slate-300">{data && hasChainData ? leanLabel(data.structure.bias) : "WAITING"}</Badge></div><div className="grid grid-cols-2 gap-3"><div className="rounded-lg border border-[#202b42] bg-[#0e131d] p-3"><p data-testid="structure-pcr-label" className="text-[10px] uppercase tracking-wider text-slate-500">PCR</p><p data-testid="structure-pcr-value" className="mt-2 font-mono text-lg font-bold text-white">{data && hasChainData ? data.structure.pcr.toFixed(2) : "—"}</p></div><div className="rounded-lg border border-[#202b42] bg-[#0e131d] p-3"><p data-testid="structure-max-pain-label" className="text-[10px] uppercase tracking-wider text-slate-500">Max pain</p><p data-testid="structure-max-pain-value" className="mt-2 font-mono text-lg font-bold text-white">{data && hasChainData ? formatInteger(data.structure.max_pain) : "—"}</p></div></div><div data-testid="oi-buildup-summary" className="rounded-lg border border-blue-500/20 bg-blue-500/5 px-3 py-3"><p data-testid="oi-buildup-label" className="text-[10px] uppercase tracking-wider text-blue-300/70">OI buildup</p><p data-testid="oi-buildup-value" className="mt-1 text-sm text-blue-100">{data?.structure.oi_buildup ?? "Waiting for option chain"}</p></div></CardContent></Card>
 
-            <Card data-testid="alert-controls-card" className="border-[#202b42] bg-[#101621]/90">
+            <Card id="alerts" data-testid="alert-controls-card" className="border-[#202b42] bg-[#101621]/90">
               <CardHeader className="flex-row items-center justify-between border-b border-[#202b42] px-4 py-3"><div><CardTitle data-testid="alert-controls-title" className="font-heading text-base text-slate-100">Alert controls</CardTitle><p data-testid="alert-controls-subtitle" className="mt-1 text-xs text-slate-500">ATM sensitivity, cooldown, and quiet hours</p></div><Settings2 data-testid="alert-controls-icon" className="size-4 text-slate-600" /></CardHeader>
               <CardContent className="p-4"><form data-testid="alert-controls-form" className="space-y-3" onSubmit={(event) => { event.preventDefault(); alertSettingsMutation.mutate({ atm_shift_steps: atmShiftSteps, cooldown_seconds: cooldownSeconds, quiet_start: quietStart, quiet_end: quietEnd }); }}>
                 <div className="grid grid-cols-2 gap-3"><div><label data-testid="atm-threshold-label" htmlFor="atm-threshold-select" className="text-[10px] uppercase tracking-wider text-slate-500">ATM shift</label><select id="atm-threshold-select" data-testid="atm-threshold-select" value={atmShiftSteps} onChange={(event) => setAtmShiftSteps(Number(event.target.value))} className="mt-1.5 w-full rounded-md border border-[#2a364f] bg-[#0e131d] px-2.5 py-2 text-xs text-slate-300"><option value={1}>1 full strike</option><option value={2}>2 full strikes</option><option value={3}>3 full strikes</option></select></div><div><label data-testid="alert-cooldown-label" htmlFor="alert-cooldown-input" className="text-[10px] uppercase tracking-wider text-slate-500">Cooldown seconds</label><input id="alert-cooldown-input" data-testid="alert-cooldown-input" type="number" min={0} max={3600} value={cooldownSeconds} onChange={(event) => setCooldownSeconds(Number(event.target.value))} className="mt-1.5 w-full rounded-md border border-[#2a364f] bg-[#0e131d] px-2.5 py-2 text-xs text-slate-300" /></div></div>
@@ -772,6 +775,10 @@ export default function Home({ isOwner = true }: { isOwner?: boolean }) {
 
         <section id="ai" aria-label="AI analyst" className="scroll-mt-4">
           <AiAnalyst symbol={symbol} configured={Boolean(aiStatusQuery.data?.configured)} demo={modeLabel === "DEMO"} dataAsOf={data && hasChainData ? data.as_of : null} sessionId={aiSessionId} onEnableNotifications={enableNotifications} />
+        </section>
+
+        <section id="guide" aria-label="Features guide" className="scroll-mt-4">
+          <FeatureGuide isOwner={isOwner} />
         </section>
 
         <footer data-testid="app-footer" className="flex flex-col gap-2 border-t border-[#1e2638] pt-4 text-[10px] text-slate-600 sm:flex-row sm:items-center sm:justify-between"><span data-testid="compliance-disclaimer">Read-only market analytics. Not investment advice. No orders are placed by this dashboard.</span>{isOwner && <button data-testid="demo-mode-toggle" type="button" className="flex items-center gap-1 text-indigo-400 transition-colors hover:text-indigo-300" onClick={() => setDemoOpen(true)}><RefreshCw className="size-3" />Keep DEMO mode enabled</button>}</footer>

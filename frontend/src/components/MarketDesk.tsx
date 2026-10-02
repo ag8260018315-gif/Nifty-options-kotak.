@@ -185,6 +185,7 @@ const SECTIONS: { id: string; label: string }[] = [
   { id: "checks", label: "Pre-trade checks" },
   { id: "ai", label: "AI analyst" },
   { id: "export", label: "Export" },
+  { id: "guide", label: "Guide" },
 ];
 
 export function DeskNav() {
