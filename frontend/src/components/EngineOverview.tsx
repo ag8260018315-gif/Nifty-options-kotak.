@@ -23,12 +23,16 @@ const SAFETY = [
 
 function Dots() {
   return (
-    <div aria-hidden className="relative mx-2 hidden h-10 min-w-24 flex-1 items-center md:flex">
-      <div className="h-px w-full bg-gradient-to-r from-violet-500/50 to-emerald-500/50" />
-      {[0, 1, 2].map((i) => (
-        <span key={i} className="eo-flow absolute left-0 size-1.5 rounded-full bg-sky-300" style={{ animationDelay: `${i * 0.8}s` }} />
-      ))}
-      <span className="absolute -top-1 left-1/2 -translate-x-1/2 whitespace-nowrap rounded-full border border-[#2a364f] bg-[#0e131d] px-2 py-0.5 text-[9px] text-slate-400">settings only (config.json)</span>
+    <div aria-hidden className="mx-3 hidden min-w-32 flex-1 flex-col items-center justify-center gap-1 md:flex">
+      <span className="rounded-full border border-[#2a364f] bg-[#0e131d] px-2.5 py-0.5 text-[10px] text-slate-300">settings file</span>
+      <div className="relative flex h-4 w-full items-center">
+        <div className="h-px w-full bg-gradient-to-r from-violet-500/60 to-emerald-500/60" />
+        <svg className="absolute right-0 size-3 text-emerald-400" viewBox="0 0 12 12" fill="currentColor"><path d="M2 1l9 5-9 5z" /></svg>
+        {[0, 1, 2].map((i) => (
+          <span key={i} className="eo-flow absolute left-0 size-1.5 rounded-full bg-sky-300" style={{ animationDelay: `${i * 0.8}s` }} />
+        ))}
+      </div>
+      <span className="text-[9px] text-slate-500">Research to Live (settings only)</span>
     </div>
   );
 }
