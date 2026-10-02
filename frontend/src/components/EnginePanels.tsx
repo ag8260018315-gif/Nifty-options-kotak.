@@ -90,6 +90,21 @@ function Banner({ tone, title, text, testId }: { tone: "live" | "research"; titl
   );
 }
 
+function Brief({ tone, summary, points, testId }: { tone: "live" | "research"; summary: string; points: string[]; testId: string }) {
+  const accent = tone === "live" ? "text-emerald-300" : "text-violet-300";
+  return (
+    <details data-testid={testId} className="group rounded-lg border border-[#202b42] bg-[#0e131d]/90 px-4 py-2.5">
+      <summary className="cursor-pointer list-none text-xs text-slate-300">
+        <span className={`mr-2 font-semibold ${accent}`}>How this works</span>
+        <span className="text-slate-500">{summary}</span>
+      </summary>
+      <ul className="mt-2 space-y-1.5 border-t border-[#202b42] pt-2">
+        {points.map((point) => <li key={point} className="text-[11px] leading-relaxed text-slate-400">• {point}</li>)}
+      </ul>
+    </details>
+  );
+}
+
 export function LiveSignalPanel({ symbol }: { symbol: IndexSymbol }) {
   const query = useQuery({ queryKey: ["live-signal", symbol], queryFn: () => apiGet<LiveSignal>(`/live/signal?symbol=${symbol}`), refetchInterval: 3000, retry: false });
   const s = query.data;
@@ -99,6 +114,18 @@ export function LiveSignalPanel({ symbol }: { symbol: IndexSymbol }) {
   return (
     <section id="signals" aria-label="Live signal" className="scroll-mt-4 space-y-3">
       <Banner tone="live" title="Live signal" text="Computed from current market data only. Not a backtest." testId="live-signal-banner" />
+      <Brief
+        tone="live"
+        testId="live-signal-brief"
+        summary="A signal built only from the market right now."
+        points={[
+          "Checks the live feed first. Stale, future-dated, or unfinished data blocks the signal.",
+          "Reads trend (EMA), momentum (RSI) and open interest (PCR), then picks the best-scoring strike.",
+          "Current signal confidence is how strong the setup is right now. It is not a win rate.",
+          "Historical validated accuracy comes from the Research section below. It is a separate number and is only shown after research has validated it.",
+          "Stop and target levels are shown for the chosen strike. The app never places orders.",
+        ]}
+      />
       <Card data-testid="live-signal-card" className="border-[#202b42] bg-[#0c0f17]/95">
         <CardHeader className="flex-row items-center justify-between border-b border-[#202b42] px-4 py-3">
           <CardTitle className="font-heading text-base text-slate-100">{symbol} current signal</CardTitle>
@@ -145,6 +172,18 @@ export function ResearchPanel({ symbol }: { symbol: IndexSymbol }) {
   return (
     <section id="research" aria-label="Research and historical analysis" className="scroll-mt-4 space-y-3">
       <Banner tone="research" title="Research / historical analysis" text="Past data only. These numbers are not live signals." testId="research-banner" />
+      <Brief
+        tone="research"
+        testId="research-brief"
+        summary="Past data used to tune and test the settings. It never creates a live trade."
+        points={[
+          "Research runs on historical candles only and tests the rules on sessions it did not tune on (walk-forward).",
+          "Accuracy here is index-direction accuracy at a fixed horizon, not option profit or a promise of live results.",
+          "A look-ahead check confirms no future data was used. If it fails, no settings are written.",
+          "The only thing research passes to the live engine is a settings file (config.json). Nothing else is shared.",
+          "Until a research run is applied, the dashboard says Not validated and the live engine uses default settings.",
+        ]}
+      />
       <Card data-testid="research-card" className="border-violet-500/15 bg-[#0c0f17]/95">
         <CardHeader className="border-b border-[#202b42] px-4 py-3"><CardTitle className="font-heading text-base text-slate-100">{symbol} historical validation</CardTitle></CardHeader>
         <CardContent className="space-y-4 p-4">
