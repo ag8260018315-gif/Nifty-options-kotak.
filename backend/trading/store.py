@@ -36,3 +36,14 @@ async def is_killed(live_db: Any) -> tuple[bool, str | None]:
 
 async def set_killed(live_db: Any, killed: bool, reason: str) -> None:
     await live_db.trading_state.update_one({"_id": "state"}, {"$set": {"killed": killed, "reason": reason}}, upsert=True)
+
+
+async def account_totals(live_db: Any) -> tuple[float, float]:
+    """(realised P&L over all closed trades, cost of currently open trades)."""
+    realised, open_cost = 0.0, 0.0
+    async for t in live_db.auto_trades.find({}, {"status": 1, "pnl": 1, "entry_premium": 1, "quantity": 1}):
+        if t["status"] == "CLOSED":
+            realised += t["pnl"]
+        else:
+            open_cost += t["entry_premium"] * t["quantity"]
+    return realised, open_cost

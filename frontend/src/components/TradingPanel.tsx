@@ -31,6 +31,7 @@ interface TraderStatus {
   killed: boolean;
   kill_reason: string | null;
   settings: { lots: number; max_open_positions: number; max_trades_per_day: number; max_daily_loss: number; squareoff_time: string };
+  account: { start_capital: number; realised_pnl: number; equity: number; available: number; return_pct: number | null };
   today: { trades: number; open_positions: number; pnl: number; wins: number; losses: number };
   open_positions: Trade[];
 }
@@ -71,6 +72,15 @@ export default function TradingPanel({ isOwner }: { isOwner: boolean }) {
           {s?.broker_error && <p data-testid="trader-broker-error" className="rounded border border-rose-500/25 bg-rose-500/5 px-3 py-2 text-xs text-rose-300">Real orders are disabled: {s.broker_error}</p>}
           {s && (
             <>
+              {s.account.start_capital > 0 && (
+                <div data-testid="trader-account" className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                  <div className={box}><p className="text-[10px] text-slate-500">Practice starting money</p><p className="mt-1 font-mono text-lg font-bold text-slate-100">{rupees(s.account.start_capital)}</p></div>
+                  <div className={box}><p className="text-[10px] text-slate-500">Practice balance now</p><p data-testid="trader-equity" className={`mt-1 font-mono text-lg font-bold ${s.account.equity < s.account.start_capital ? "text-rose-300" : "text-emerald-300"}`}>{rupees(s.account.equity)}</p></div>
+                  <div className={box}><p className="text-[10px] text-slate-500">Total return</p><p className={`mt-1 font-mono text-lg font-bold ${(s.account.return_pct ?? 0) < 0 ? "text-rose-300" : "text-emerald-300"}`}>{s.account.return_pct === null ? "—" : `${s.account.return_pct.toFixed(2)}%`}</p></div>
+                  <div className={box}><p className="text-[10px] text-slate-500">Free cash for new trades</p><p className="mt-1 font-mono text-lg font-bold text-slate-100">{rupees(s.account.available)}</p></div>
+                </div>
+              )}
+              {s.account.start_capital <= 0 && <p className="text-[10px] text-slate-500">Tip: set TRADING_START_CAPITAL (for example 20000) on the server to track a practice balance and return.</p>}
               <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
                 <div className={box}><p className="text-[10px] text-slate-500">Today's practice P&L</p><p data-testid="trader-pnl" className={`mt-1 font-mono text-lg font-bold ${s.today.pnl < 0 ? "text-rose-300" : "text-emerald-300"}`}>{rupees(s.today.pnl)}</p></div>
                 <div className={box}><p className="text-[10px] text-slate-500">Trades today</p><p className="mt-1 font-mono text-lg font-bold text-slate-100">{s.today.trades} <span className="text-[10px] font-normal text-slate-500">of {s.settings.max_trades_per_day}</span></p></div>

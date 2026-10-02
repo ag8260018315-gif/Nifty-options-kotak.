@@ -48,6 +48,10 @@ class AutoTrader:
             return
         try:
             fill = self.broker.fill("BUY", quote)
+            realised, open_cost = await store.account_totals(self.db)
+            acct = engine.account(self.settings.start_capital, realised, open_cost)
+            if not engine.can_afford(self.settings.start_capital, acct["available"], fill, self.settings.quantity(symbol)):
+                return  # not enough free practice cash for this trade
         except BrokerNotVerified as exc:
             await store.set_killed(self.db, True, str(exc))  # fail safe: stop trading rather than guess
             logger.error("AUTO_TRADER_HALTED %s", exc)
