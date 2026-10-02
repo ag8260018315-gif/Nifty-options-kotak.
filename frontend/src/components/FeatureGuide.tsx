@@ -39,6 +39,7 @@ export const GROUPS: Group[] = [
     features: [
       { title: "How it works", brief: "An animated picture of the two engines: research tunes the settings from past data, and the live engine turns today's market into a signal.", target: "how", where: "How it works" },
       { title: "Live signal", brief: "A CE or PE signal with the chosen strike, stop and target, built only from current data. It shows its own confidence, and is blocked if the data is stale or from the future.", target: "signals", where: "Live signal" },
+      { title: "Auto-trader (practice)", brief: "Takes each live signal as a practice trade with pretend money, applies stop, target, daily-loss and square-off limits, and shows the profit and loss. No order reaches Kotak. The owner can stop it with one button.", target: "trader", where: "Auto-trader" },
       { title: "Research and validation", brief: "Past candles are used to tune and test the rules on days they were not tuned on. The result is the historical validated accuracy, a separate number from live confidence.", target: "research", where: "Research" },
     ],
   },
