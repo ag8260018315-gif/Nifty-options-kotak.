@@ -124,3 +124,21 @@ def test_no_recorded_session_at_all_stays_empty_without_error(api, monkeypatch):
     _market(monkeypatch, open_=False)
     a = api.client.get("/api/premium/stock/INFY?interval=1", headers=owner(api)).json()["analysis"]
     assert a["session_day"] is None and a["candles"] == []
+
+
+def test_announcements_parse_defensively_and_endpoint_degrades_to_unavailable(api, monkeypatch):
+    from premium import announcements as an
+
+    items = an.parse([{"desc": "Outcome of Board Meeting", "attchmntText": "Dividend declared", "an_dt": "03-Oct-2026 18:30:12", "attchmntFile": "https://nsearchives.nseindia.com/a.pdf"},
+                      {"desc": "x", "attchmntFile": "javascript:alert(1)"}, "junk", {}])
+    assert len(items) == 2 and items[0]["sentiment"]["tone"] == "Positive" and items[0]["published_at"].startswith("2026-10-03") and items[1]["link"] is None
+    assert an.parse({"unexpected": 1}) == [] and an.parse(None) == []
+
+    async def down(symbol, client=None):
+        raise RuntimeError("blocked")
+
+    monkeypatch.setattr(an, "fetch", down)
+    r = api.client.get("/api/premium/stock/TCS/announcements", headers=owner(api))
+    assert r.status_code == 200 and r.json()["announcements"]["status"] == "unavailable" and r.json()["announcements"]["items"] == []
+    assert api.client.get("/api/premium/stock/NOPE/announcements", headers=owner(api)).status_code == 404
+    assert api.client.get("/api/premium/stock/TCS/announcements", headers=api.cookie("viewer@example.com")).status_code == 403

@@ -295,17 +295,40 @@ export interface CompareResponse {
   note: string;
 }
 
+export interface Sentiment {
+  tone: "Positive" | "Negative" | "Mixed" | "Neutral";
+  topic: string;
+  positive_words: string[];
+  negative_words: string[];
+}
+
+export interface SentimentSummary {
+  counts: Record<Sentiment["tone"], number>;
+  overall: Sentiment["tone"] | "None";
+  items: number;
+  note: string;
+}
+
 export interface NewsItem {
   title: string;
-  link: string;
-  source: string | null;
+  link: string | null;
+  source?: string | null;
+  category?: string | null;
   published_at: string | null;
+  sentiment?: Sentiment; // keyword reading, absent from older backends
 }
 
 export interface NewsBlock {
   status: "ok" | "unavailable";
   provider: string;
   items: NewsItem[];
+  summary?: SentimentSummary;
+}
+
+export interface AnnouncementsResponse {
+  symbol: string;
+  announcements: NewsBlock;
+  note: string;
 }
 
 export interface BreakoutSetup {
