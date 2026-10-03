@@ -101,6 +101,19 @@ def test_uptrend_gives_bullish_setup_with_reasons_invalidation_and_freshness():
     assert sig["momentum"]["label"] and sig["volatility"]["label"] in {"Low", "Normal", "High"} and 0 <= sig["trend_strength"] <= 100
 
 
+def test_markers_list_every_recent_pattern_with_its_candle_time_for_the_chart():
+    sig = run(trend_bars(), LIVE)
+    assert isinstance(sig["markers"], list) and len(sig["markers"]) >= len(sig["patterns"])
+    assert all({"name", "direction", "time", "explanation"} <= set(m) for m in sig["markers"])
+    assert run(trend_bars(n=5), LIVE)["markers"] == []  # no signal, no markers
+
+
+def test_the_same_pattern_on_several_candles_gives_one_reason_line_not_duplicates():
+    sig = run(trend_bars(), LIVE)
+    pattern_lines = [r for r in sig["reasons"] if r.startswith("Pattern:")]
+    assert len(pattern_lines) == len(set(pattern_lines))  # the page uses each reason as a list key
+
+
 def test_downtrend_gives_bearish_short_setup():
     sig = run([b(i, x["open"], x["high"], x["low"], x["close"], x["volume"]) for i, x in enumerate(trend_bars(drift=-0.25))][::1], LIVE)
     bars = []

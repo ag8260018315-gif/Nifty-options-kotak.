@@ -321,6 +321,20 @@ async def stock_detail(symbol: str, interval: int = Query(default=1), ema_fast: 
             "market": market, "analysis": analysis, "engine": stock_signal(analysis, market, interval), "performance": await _performance(symbol)}
 
 
+@router.get("/stock/{symbol}/news")
+async def stock_news(symbol: str) -> dict[str, Any]:
+    """Recent headlines for one stock (Google News, best effort). Shown as published, never judged or summarised as fact."""
+    symbol = symbol.upper()
+    if symbol not in premium_market.symbols("stock"):
+        raise HTTPException(status_code=404, detail="Unknown stock.")
+    try:
+        block = await news.headlines(symbol, limit=8)
+    except Exception:  # noqa: BLE001  news trouble must never break the stock page
+        block = {"status": "unavailable", "provider": news.PROVIDER, "items": []}
+    return {"label": LABEL, "symbol": symbol, "news": block,
+            "note": "Headlines come from Google News and are shown as published. They are not verified by this app and may be unrelated or delayed."}
+
+
 async def _performance(symbol: str) -> dict[str, Any]:
     try:
         return await performance_for(research_db, symbol)
@@ -370,6 +384,12 @@ async def my_watchlists(user: dict[str, Any] = Depends(require_premium)) -> dict
 @router.put("/me/watchlists/{name}")
 async def save_watchlist(name: str, symbols: list[str] = Body(..., embed=True), user: dict[str, Any] = Depends(require_premium)) -> dict[str, Any]:
     return {"watchlists": await userdata.put_list(db, userdata.owner_key(user), name, symbols, set(premium_market.symbols("stock")))}
+
+
+@router.patch("/me/watchlists/{name}")
+async def change_watchlist(name: str, add: list[str] = Body(default=[]), remove: list[str] = Body(default=[]), user: dict[str, Any] = Depends(require_premium)) -> dict[str, Any]:
+    """Add or remove symbols without replacing the whole list (safe when the account is open on two devices)."""
+    return {"watchlists": await userdata.patch_list(db, userdata.owner_key(user), name, add, remove, set(premium_market.symbols("stock")))}
 
 
 @router.delete("/me/watchlists/{name}")

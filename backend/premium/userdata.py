@@ -8,7 +8,7 @@ from fastapi import HTTPException
 
 WATCHLISTS, LAYOUTS = "premium_watchlists", "premium_layouts"
 MAX_LISTS, MAX_LAYOUTS, MAX_NAME = 10, 10, 30
-NAME_RE = re.compile(r"^[\w &.\-]{1,30}$")
+NAME_RE = re.compile(r"^[\w &\-]{1,30}$")  # no "." or "/": names are stored as keys and travel inside a URL path
 PANES = {"rsi", "macd", "none"}
 INTERVALS = {1, 5, 15, 30, 60, 240, 1440, 10080, 43200}
 FLAGS = ("ema", "bb", "vwap", "levels", "patterns", "setup")
@@ -20,8 +20,8 @@ def owner_key(user: dict[str, Any]) -> str:
 
 def clean_name(name: str) -> str:
     name = (name or "").strip()
-    if not NAME_RE.match(name):
-        raise HTTPException(status_code=422, detail="Names can use letters, numbers, spaces and & . - _ (up to 30 characters).")
+    if not NAME_RE.match(name) or not any(ch.isalnum() for ch in name):
+        raise HTTPException(status_code=422, detail="Names need a letter or number and can use spaces and & - _ (up to 30 characters).")
     return name
 
 
@@ -43,6 +43,27 @@ async def put_list(db: Any, key: str, name: str, symbols: list[str], universe: s
     if name not in lists and len(lists) >= MAX_LISTS:
         raise HTTPException(status_code=422, detail=f"You can keep up to {MAX_LISTS} watchlists.")
     lists[name] = seen
+    await db[WATCHLISTS].replace_one({"_id": key}, {"_id": key, "lists": lists, "updated_at": time.time()}, upsert=True)
+    return lists
+
+
+async def patch_list(db: Any, key: str, name: str, add: list[str], remove: list[str], universe: set[str]) -> dict[str, list[str]]:
+    """Add and/or remove symbols on the list as it is now on the server (creating it if needed). Unlike put_list this can never wipe
+    out symbols the caller did not know about, e.g. when the same account is open on two devices."""
+    name = clean_name(name)
+    wanted_add = [str(s).upper().strip() for s in add]
+    for s in wanted_add:
+        if s not in universe:
+            raise HTTPException(status_code=422, detail=f"{s} is not a supported stock.")
+    drop = {str(s).upper().strip() for s in remove}
+    lists = await get_lists(db, key)
+    if name not in lists and len(lists) >= MAX_LISTS:
+        raise HTTPException(status_code=422, detail=f"You can keep up to {MAX_LISTS} watchlists.")
+    current = [s for s in lists.get(name, []) if s not in drop]
+    for s in wanted_add:
+        if s not in current:
+            current.append(s)
+    lists[name] = current
     await db[WATCHLISTS].replace_one({"_id": key}, {"_id": key, "lists": lists, "updated_at": time.time()}, upsert=True)
     return lists
 

@@ -40,3 +40,22 @@ def test_free_users_cannot_reach_any_of_it(api):
     for path in ("/api/premium/stocks-meta", "/api/premium/stock/TCS?ema_fast=5&ema_slow=40", "/api/premium/stock/TCS?interval=43200"):
         r = api.client.get(path, headers=free)
         assert r.status_code == 403 and "engine" not in r.text and "sector" not in r.text
+
+
+def test_stock_news_is_premium_only_validates_the_symbol_and_survives_provider_failure(api, monkeypatch):
+    from premium import news
+
+    async def fake(symbol, limit=4, client=None):
+        return {"status": "ok", "provider": news.PROVIDER, "items": [{"title": f"{symbol} results", "link": "https://example.com/a", "source": "Example", "published_at": None}]}
+
+    async def boom(symbol, limit=4, client=None):
+        raise RuntimeError("provider down")
+
+    monkeypatch.setattr(news, "headlines", fake)
+    ok = api.client.get("/api/premium/stock/TCS/news", headers=owner(api)).json()
+    assert ok["symbol"] == "TCS" and ok["news"]["items"][0]["title"] == "TCS results" and "not verified" in ok["note"]
+    assert api.client.get("/api/premium/stock/NOPE/news", headers=owner(api)).status_code == 404
+    assert api.client.get("/api/premium/stock/TCS/news", headers=api.cookie("viewer@example.com")).status_code == 403
+    monkeypatch.setattr(news, "headlines", boom)
+    down = api.client.get("/api/premium/stock/TCS/news", headers=owner(api))
+    assert down.status_code == 200 and down.json()["news"]["status"] == "unavailable" and down.json()["news"]["items"] == []
