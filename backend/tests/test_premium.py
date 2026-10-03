@@ -36,6 +36,8 @@ def api(monkeypatch):
     monkeypatch.setattr(premium_market, "_quotes_restored", False)
     premium_market.quotes.clear()
     monkeypatch.setattr(rpm, "research_db", AsyncMongoMockClient()["research"])
+    monkeypatch.setattr(rpm, "db", db)
+    rpm._history_cache.clear()
     rpm._prev_cache.clear()
     rpm._quick_cache.clear()
     premium._cache.clear()

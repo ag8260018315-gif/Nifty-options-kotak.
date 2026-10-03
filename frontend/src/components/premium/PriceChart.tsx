@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 
-import { clock, price, whole, type Analysis } from "@/lib/premium";
+import { intervalName, price, stamp, whole, type Analysis } from "@/lib/premium";
 
 // Interactive SVG candlestick chart: hover for values, drag to pan, wheel or +/- to zoom.
 // Overlays: EMA 9/21, Bollinger bands, VWAP, support/resistance and pivots. Panes: volume, RSI or MACD.
@@ -143,14 +143,14 @@ export default function PriceChart({ analysis, options }: { analysis: Analysis; 
   const bar = candles[Math.max(0, Math.min(n - 1, shown))];
   const at = (values: Nums | undefined) => (values ? values[Math.max(0, Math.min(n - 1, shown))] : null);
   const last = candles[n - 1];
-  const labelStep = Math.max(1, Math.round(visibleCount / 6));
+  const labelStep = Math.max(1, Math.round(visibleCount / (analysis.interval >= 60 ? 4 : 6)));
   const volLabel = (v: number) => (v >= 1e7 ? `${(v / 1e7).toFixed(1)}Cr` : v >= 1e5 ? `${(v / 1e5).toFixed(1)}L` : v >= 1e3 ? `${(v / 1e3).toFixed(0)}k` : String(v));
 
   return (
     <div data-testid="price-chart" className="space-y-2">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <p data-testid="chart-readout" className="font-mono text-[11px] tabular-nums text-slate-400">
-          <span className="text-slate-500">{clock(bar.time)}</span> O {price(bar.open)} H {price(bar.high)} L {price(bar.low)} <span className={bar.close >= bar.open ? "text-emerald-300" : "text-rose-300"}>C {price(bar.close)}</span>
+          <span className="text-slate-500">{stamp(bar.time, analysis.interval)}</span> O {price(bar.open)} H {price(bar.high)} L {price(bar.low)} <span className={bar.close >= bar.open ? "text-emerald-300" : "text-rose-300"}>C {price(bar.close)}</span>
           {hasVolume && <> V {whole(bar.volume)}</>}
           {options.ema && <> <span className="text-amber-300">E9 {price(at(series?.ema9))}</span> <span className="text-sky-300">E21 {price(at(series?.ema21))}</span></>}
         </p>
@@ -166,7 +166,7 @@ export default function PriceChart({ analysis, options }: { analysis: Analysis; 
         viewBox={`0 0 ${W} ${height}`}
         className="h-auto w-full touch-pan-y select-none rounded-lg bg-[#090d15]"
         role="img"
-        aria-label={`Candlestick chart, ${analysis.interval}-minute candles`}
+        aria-label={`Candlestick chart, ${intervalName(analysis.interval)} candles`}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
@@ -251,7 +251,7 @@ export default function PriceChart({ analysis, options }: { analysis: Analysis; 
           );
         })()}
 
-        {candles.slice(start, end).map((c, k) => (k % labelStep === 0 ? <text key={c.time} x={Math.min(plotW - 28, x(start + k) - 14)} y={height - 5} fontSize={10} fill="#64748b" fontFamily="monospace">{clock(c.time)}</text> : null))}
+        {candles.slice(start, end).map((c, k) => (k % labelStep === 0 ? <text key={c.time} x={Math.min(plotW - (analysis.interval >= 60 ? 60 : 28), x(start + k) - 14)} y={height - 5} fontSize={10} fill="#64748b" fontFamily="monospace">{stamp(c.time, analysis.interval)}</text> : null))}
         {hover !== null && (
           <g pointerEvents="none">
             <line x1={x(hover)} x2={x(hover)} y1={0} y2={height - AXIS} stroke="#94a3b8" strokeOpacity={0.5} strokeDasharray="3 3" />

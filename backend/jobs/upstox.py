@@ -26,8 +26,9 @@ class UpstoxError(RuntimeError):
     pass
 
 
-def parse_candles(payload: dict[str, Any]) -> list[dict[str, Any]]:
-    """Bars (oldest first) from an Upstox response, kept only inside the NSE session. Rows with missing prices are skipped."""
+def parse_candles(payload: dict[str, Any], session_only: bool = True) -> list[dict[str, Any]]:
+    """Bars (oldest first) from an Upstox response. With session_only (intraday candles) bars outside the NSE session and on weekends
+    are dropped; daily candles (session_only=False) keep their midnight timestamp. Rows with missing prices are skipped."""
     rows = ((payload or {}).get("data") or {}).get("candles") or []
     bars: dict[int, dict[str, Any]] = {}
     for row in rows:
@@ -37,7 +38,7 @@ def parse_candles(payload: dict[str, Any]) -> list[dict[str, Any]]:
             v = int(float(row[5])) if len(row) > 5 and row[5] is not None else 0
         except (TypeError, ValueError, IndexError):
             continue
-        if stamp.weekday() >= 5 or not (OPEN_T <= stamp.time() < CLOSE_T) or min(o, h, l, c) <= 0:
+        if min(o, h, l, c) <= 0 or (session_only and (stamp.weekday() >= 5 or not (OPEN_T <= stamp.time() < CLOSE_T))):
             continue
         bars[int(stamp.timestamp())] = {"time": int(stamp.timestamp()), "open": o, "high": h, "low": l, "close": c, "volume": v}
     return [bars[k] for k in sorted(bars)]

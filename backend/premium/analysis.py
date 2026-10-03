@@ -159,8 +159,21 @@ def score_signal(last: float, rsi_now: float | None, macd_hist: list[float], ema
     return max(-100, min(100, score)), why
 
 
+def _frame(minutes: int) -> str:
+    return {60: "1-hour", 240: "4-hour", 1440: "daily", 10080: "weekly"}.get(minutes, f"{minutes}-minute")
+
+
+def _tail(out: dict[str, Any], tail: int | None) -> dict[str, Any]:
+    """Keep only the most recent `tail` candles in the output. Indicators were computed on the full history first, so they are warmed up."""
+    if tail and out.get("candles"):
+        out["candles"] = out["candles"][-tail:]
+        if out.get("series"):
+            out["series"] = {k: v[-tail:] for k, v in out["series"].items()}
+    return out
+
+
 def analyse(bars: list[dict[str, Any]], interval: int, prev_day: dict[str, float] | None, now_epoch: float, has_volume: bool,
-            day_high: float | None = None, day_low: float | None = None, include_series: bool = True) -> dict[str, Any]:
+            day_high: float | None = None, day_low: float | None = None, include_series: bool = True, tail: int | None = None) -> dict[str, Any]:
     """`bars` already resampled to `interval` minutes (oldest first), the last one possibly still forming."""
     width = interval * 60
     closed = [b for b in bars if b["time"] + width <= now_epoch]
@@ -191,8 +204,8 @@ def analyse(bars: list[dict[str, Any]], interval: int, prev_day: dict[str, float
     if len(closed) < MIN_BARS:
         out.update(levels=support_resistance(closed, closed[-1]["close"] if closed else 0, prev_day, day_high, day_low) if closed else None,
                    volume=volume_analysis(closed, has_volume) if closed else {"available": False}, trend={"label": "BUILDING", "basis": []},
-                   signal={"action": "BUILDING", "score": 0, "reasons": [f"Needs {MIN_BARS} closed {interval}-minute candles; has {len(closed)}. Candles come from live ticks since the server started."]})
-        return out
+                   signal={"action": "BUILDING", "score": 0, "reasons": [f"Needs {MIN_BARS} closed {_frame(interval)} candles; has {len(closed)}. " + ("Long timeframes need stored history: run the history import." if interval >= 60 else "Candles come from live ticks since the server started.")]})
+        return _tail(out, tail)
     cc = [b["close"] for b in closed]
     f, s = ema(cc, 9), ema(cc, 21)
     r = rsi(cc, 14)[-1]
@@ -211,4 +224,4 @@ def analyse(bars: list[dict[str, Any]], interval: int, prev_day: dict[str, float
     out.update(levels=levels, volume=vol, trend=trend_label(cc, f, s),
                signal={"action": action, "score": score, "strength": strength, "reasons": why, "rsi": _r(r, 1), "price": _r(last), "as_of_candle": closed[-1]["time"],
                        "nearest_support": levels["nearest_support"], "nearest_resistance": levels["nearest_resistance"]})
-    return out
+    return _tail(out, tail)

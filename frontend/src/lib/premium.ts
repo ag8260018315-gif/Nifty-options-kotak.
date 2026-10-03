@@ -5,7 +5,29 @@ import { ApiError } from "@/lib/api";
 export type IndexSymbol4 = "NIFTY" | "BANKNIFTY" | "FINNIFTY" | "SENSEX";
 export const PREMIUM_INDICES: IndexSymbol4[] = ["NIFTY", "BANKNIFTY", "FINNIFTY", "SENSEX"];
 export const INDEX_LABEL: Record<IndexSymbol4, string> = { NIFTY: "NIFTY 50", BANKNIFTY: "BANK NIFTY", FINNIFTY: "FIN NIFTY", SENSEX: "SENSEX" };
-export type Interval = 1 | 5 | 15;
+export type Interval = 1 | 5 | 15 | 60 | 240 | 1440 | 10080;
+export const INTERVAL_OPTIONS: { value: Interval; label: string }[] = [
+  { value: 1, label: "1m" },
+  { value: 5, label: "5m" },
+  { value: 15, label: "15m" },
+  { value: 60, label: "1H" },
+  { value: 240, label: "4H" },
+  { value: 1440, label: "1D" },
+  { value: 10080, label: "1W" },
+];
+
+export function intervalName(minutes: number): string {
+  return ({ 1: "1-minute", 5: "5-minute", 15: "15-minute", 60: "1-hour", 240: "4-hour", 1440: "daily", 10080: "weekly" } as Record<number, string>)[minutes] ?? `${minutes}-minute`;
+}
+
+// Candle label: a clock time for intraday candles, a date for daily and weekly, both for hourly frames that span days.
+export function stamp(epochSeconds: number, minutes: number): string {
+  const date = new Date(epochSeconds * 1000);
+  const day = date.toLocaleDateString("en-IN", { day: "2-digit", month: "short", timeZone: "Asia/Kolkata" });
+  if (minutes >= 1440) return day;
+  const time = clock(epochSeconds);
+  return minutes >= 60 ? `${day} ${time}` : time;
+}
 
 export interface Quote {
   symbol: string;
@@ -94,6 +116,8 @@ export interface Analysis {
   bars_total: number;
   bars_closed: number;
   bars_required: number;
+  history_available?: boolean;
+  history_bars?: number;
   candles: Candle[];
   series?: Series;
   atr?: number | null;

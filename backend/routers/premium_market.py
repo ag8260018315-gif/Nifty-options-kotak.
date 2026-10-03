@@ -9,13 +9,16 @@ from fastapi import APIRouter, HTTPException, Query
 
 from jobs.breakout_validation import latest as latest_backtest
 from lib.candles import candle_store
-from lib.db import research_db
+from lib.db import db, research_db
 from lib.feed_worker import feed_worker
 from lib.settings import settings
 import asyncio
 
+from premium import history as index_history
 from premium import news
 from premium.analysis import MIN_BARS, analyse, resample_ohlcv
+from premium.timeframes import DAY, LONG_FRAMES, build_long_bars
+from research import stock_history
 from premium.breakout import breakout_setup
 from premium.market import IST, market_state, premium_market
 from premium.universe import INDEX_NAMES
@@ -24,7 +27,10 @@ premium_market.configure_static()  # the stock list exists even before the feed 
 router = APIRouter(prefix="/premium", tags=["premium"])
 NIFTY_INDICES = ("NIFTY", "BANKNIFTY", "FINNIFTY")
 INDICES = ("NIFTY", "BANKNIFTY", "FINNIFTY", "SENSEX")
-INTERVALS = (1, 5, 15)
+INTERVALS = (1, 5, 15, 60, 240, 1440, 10080)  # minutes: 1m 5m 15m 1h 4h 1D 1W
+LONG_TAIL = 300  # candles returned for the long frames (indicators use the full history)
+_history_cache: dict[str, tuple[float, tuple[list, list]]] = {}
+HISTORY_TTL = 600.0
 LABEL = "PREMIUM"
 _prev_cache: dict[tuple[str, str], dict[str, float] | None] = {}
 _quick_cache: dict[str, tuple[float, dict[str, Any]]] = {}
@@ -74,6 +80,8 @@ async def _prev_session(symbol: str) -> dict[str, float] | None:
 
 
 async def _analyse(symbol: str, interval: int, include_series: bool = True) -> dict[str, Any]:
+    if interval in LONG_FRAMES:
+        return await _analyse_long(symbol, interval, include_series)
     quote = (_index_quote(symbol)[0] if symbol in INDICES else premium_market.public_quote(symbol))
     bars, has_volume = await _bars(symbol)
     now = datetime.now(timezone.utc)
@@ -122,6 +130,46 @@ async def index_detail(symbol: str, interval: int = Query(default=1)) -> dict[st
         raise HTTPException(status_code=422, detail="Unknown index or interval.")
     quote, _ = _index_quote(symbol)
     return {"label": LABEL, "symbol": symbol, "name": INDEX_NAMES[symbol], "quote": _clean(quote), "market": _market_for(symbol), "analysis": await _analyse(symbol, interval)}
+
+
+async def _history(symbol: str) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """(fine intraday history, daily history) stored for this instrument. Indices use `index_history` (imported 30-minute and daily
+    candles); stocks use the 1-minute history in research storage. Cached for a few minutes."""
+    cached = _history_cache.get(symbol)
+    if cached and time.monotonic() - cached[0] < HISTORY_TTL:
+        return cached[1]
+    fine: list[dict[str, Any]] = []
+    daily: list[dict[str, Any]] = []
+    try:
+        if symbol in INDICES:
+            fine = await index_history.load(db, symbol, "30m")
+            daily = await index_history.load(db, symbol, "1d")
+        else:
+            for _day, bars in await stock_history.load_symbol(research_db, symbol):
+                fine.extend(bars)
+    except Exception:  # noqa: BLE001  a storage problem must not break the live chart
+        fine, daily = [], []
+    _history_cache[symbol] = (time.monotonic(), (fine, daily))
+    return fine, daily
+
+
+async def _analyse_long(symbol: str, minutes: int, include_series: bool = True) -> dict[str, Any]:
+    quote = _index_quote(symbol)[0] if symbol in INDICES else premium_market.public_quote(symbol)
+    today, has_volume = await _bars(symbol)
+    fine, daily = await _history(symbol)
+    bars = build_long_bars(minutes, fine, daily, today)
+    now = datetime.now(timezone.utc).timestamp()
+    prev = None
+    if minutes >= DAY:  # pivots from the previous CLOSED candle of the same size
+        closed = [b for b in bars if b["time"] + minutes * 60 <= now]
+        if closed:
+            prev = {"high": closed[-1]["high"], "low": closed[-1]["low"], "close": closed[-1]["close"]}
+    else:
+        prev = await _prev_session(symbol)
+    result = analyse(bars, minutes, prev, now, has_volume, None, None, include_series, tail=LONG_TAIL)
+    result["history_available"] = bool(fine or daily)
+    result["history_bars"] = len(bars)
+    return result
 
 
 _full_cache: dict[str, tuple[float, dict[str, Any]]] = {}
