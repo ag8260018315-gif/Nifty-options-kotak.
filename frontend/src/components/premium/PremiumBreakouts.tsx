@@ -29,7 +29,7 @@ function Expanded({ row }: { row: BreakoutRow }) {
             <ul className="mt-2 space-y-2">
               {row.news.items.map((n) => (
                 <li key={n.link}>
-                  <a href={n.link} target="_blank" rel="noopener noreferrer" className="text-xs leading-snug text-sky-300 underline-offset-2 hover:underline">{n.title}</a>
+                  <a href={n.link ?? undefined} target="_blank" rel="noopener noreferrer" className="text-xs leading-snug text-sky-300 underline-offset-2 hover:underline">{n.title}</a>
                   <p className="text-[10px] text-slate-500">{[n.source, ago(n.published_at)].filter(Boolean).join(" · ")}</p>
                 </li>
               ))}

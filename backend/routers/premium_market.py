@@ -18,7 +18,7 @@ import asyncio
 
 from premium import history as index_history
 from premium import userdata
-from premium import news
+from premium import announcements, news, sentiment
 from premium.analysis import MIN_BARS, analyse, resample_ohlcv
 from premium.signal_engine import stock_signal
 from premium.stockinfo import name_of, sector_of, sectors
@@ -359,6 +359,20 @@ async def stock_detail(symbol: str, interval: int = Query(default=1), ema_fast: 
             "market": market, "analysis": analysis, "engine": stock_signal(analysis, market, interval), "performance": await _performance(symbol)}
 
 
+@router.get("/stock/{symbol}/announcements")
+async def stock_announcements(symbol: str) -> dict[str, Any]:
+    """Exchange announcements (results, board meetings, dividends) from NSE, best effort, with a keyword reading of each."""
+    symbol = symbol.upper()
+    if symbol not in premium_market.symbols("stock"):
+        raise HTTPException(status_code=404, detail="Unknown stock.")
+    try:
+        block = await announcements.fetch(symbol)
+    except Exception:  # noqa: BLE001  never break the stock page
+        block = {"status": "unavailable", "provider": announcements.PROVIDER, "items": [], "summary": sentiment.summarize([])}
+    return {"label": LABEL, "symbol": symbol, "announcements": block,
+            "note": "Taken from the NSE website as published; availability is not guaranteed. " + sentiment.NOTE}
+
+
 @router.get("/stock/{symbol}/news")
 async def stock_news(symbol: str) -> dict[str, Any]:
     """Recent headlines for one stock (Google News, best effort). Shown as published, never judged or summarised as fact."""
@@ -369,6 +383,8 @@ async def stock_news(symbol: str) -> dict[str, Any]:
         block = await news.headlines(symbol, limit=8)
     except Exception:  # noqa: BLE001  news trouble must never break the stock page
         block = {"status": "unavailable", "provider": news.PROVIDER, "items": []}
+    items = [{**i, "sentiment": sentiment.read(i["title"])} for i in block.get("items", [])]
+    block = {**block, "items": items, "summary": sentiment.summarize(items)}
     return {"label": LABEL, "symbol": symbol, "news": block,
             "note": "Headlines come from Google News and are shown as published. They are not verified by this app and may be unrelated or delayed."}
 

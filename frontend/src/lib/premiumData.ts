@@ -2,7 +2,7 @@ import { useRef, useState } from "react";
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { apiDelete, apiGet, apiPatch, apiPut } from "@/lib/api";
-import type { Layout, StockNews, StocksMeta, Watchlists } from "@/lib/premium";
+import type { AnnouncementsResponse, Layout, StockNews, StocksMeta, Watchlists } from "@/lib/premium";
 
 // Server-side, per-user data for the premium pages. Everything here is read and written through /api/premium/me/*,
 // which only returns the signed-in user's own watchlists and chart layouts.
@@ -17,6 +17,10 @@ export function useStocksMeta() {
 
 export function useStockNews(symbol: string) {
   return useQuery({ queryKey: ["premium-stock-news", symbol], queryFn: () => apiGet<StockNews>(`/premium/stock/${encodeURIComponent(symbol)}/news`), staleTime: 300_000, retry: false });
+}
+
+export function useStockAnnouncements(symbol: string) {
+  return useQuery({ queryKey: ["premium-stock-announcements", symbol], queryFn: () => apiGet<AnnouncementsResponse>(`/premium/stock/${encodeURIComponent(symbol)}/announcements`), staleTime: 600_000, retry: false });
 }
 
 interface ListsPayload {
