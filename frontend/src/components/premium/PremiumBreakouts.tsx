@@ -60,7 +60,24 @@ export default function PremiumBreakouts() {
           <span data-testid="breakout-not-probability" className="rounded-full border border-amber-400/30 bg-amber-400/10 px-2.5 py-1 text-[10px] font-semibold text-amber-200">Score out of 100 · not a probability</span>
         </div>
         <p className="text-[11px] leading-relaxed text-slate-400">{data?.method ?? "Stocks just below resistance with rising volume, ranked by a transparent score."}</p>
-        <p data-testid="breakout-accuracy" className="text-[11px] leading-relaxed text-slate-500">Historical validated accuracy: <span className="text-slate-300">Not validated</span>. {data?.accuracy.note ?? "No success rate is claimed."}</p>
+        {data?.accuracy.backtest ? (
+          <div data-testid="breakout-accuracy" className="rounded-lg border border-[#202b42] bg-[#090d15] p-3 text-[11px] leading-relaxed text-slate-400">
+            <p>
+              <span className="font-semibold text-slate-200">Historical test (past data): </span>
+              {data.accuracy.backtest.hit_rate_pct ?? "—"}% of {data.accuracy.backtest.setups} past setups met the success rule
+              {data.accuracy.backtest.ci95_low_pct !== null && ` (95% range ${data.accuracy.backtest.ci95_low_pct}–${data.accuracy.backtest.ci95_high_pct}%)`}, over {data.accuracy.backtest.sessions_tested} sessions
+              {data.accuracy.backtest.period ? ` (${data.accuracy.backtest.period[0]} to ${data.accuracy.backtest.period[1]})` : ""}.
+              {!data.accuracy.validated && <span className="text-amber-300"> Not enough history yet to rely on this.</span>}
+            </p>
+            <p className="mt-1 text-slate-500">{data.accuracy.backtest.definition}</p>
+            <p className="mt-2 flex flex-wrap gap-x-4 gap-y-1">
+              {data.accuracy.backtest.by_score_band.filter((b) => b.setups > 0).map((b) => <span key={b.band}>score {b.band}: <span className="text-slate-200">{b.hit_rate_pct}%</span> of {b.setups}</span>)}
+            </p>
+            <p className="mt-2 text-slate-500">{data.accuracy.note}</p>
+          </div>
+        ) : (
+          <p data-testid="breakout-accuracy" className="text-[11px] leading-relaxed text-slate-500">Historical validated accuracy: <span className="text-slate-300">Not validated</span>. {data?.accuracy.note ?? "No success rate is claimed."}</p>
+        )}
       </div>
       {query.isError && <p className="p-4 text-xs text-slate-500">The watchlist is unavailable right now.</p>}
       {data && data.stocks.length === 0 && (

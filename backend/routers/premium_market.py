@@ -7,7 +7,9 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query
 
+from jobs.breakout_validation import latest as latest_backtest
 from lib.candles import candle_store
+from lib.db import research_db
 from lib.feed_worker import feed_worker
 from lib.settings import settings
 import asyncio
@@ -157,6 +159,19 @@ async def stocks() -> dict[str, Any]:
     return {"label": LABEL, "market": market, "count": sum(1 for r in rows if r["quote"]), "configured": len(rows), "stocks": rows}
 
 
+async def _accuracy() -> dict[str, Any]:
+    """The back-test result for this rule when one exists. Always labelled as past results, never as a probability."""
+    base = {"validated": False, "note": "This score is not a probability. No historical test of this rule exists yet, so no success rate is claimed."}
+    try:
+        result = await latest_backtest(research_db)
+    except Exception:  # noqa: BLE001  a research-storage problem must not break the live list
+        return base
+    if not result:
+        return base
+    return {**base, "validated": bool(result["validated"]), "backtest": {k: result.get(k) for k in ("setups", "successes", "hit_rate_pct", "ci95_low_pct", "ci95_high_pct", "stops", "timeouts", "sessions_tested", "symbols_tested", "period", "by_score_band", "definition", "created_at")},
+            "note": result["note"]}
+
+
 @router.get("/stocks/breakouts")
 async def breakouts(limit: int = Query(default=10, ge=1, le=20)) -> dict[str, Any]:
     """Watchlist of stocks sitting just below resistance, ranked by a transparent SCORE (never a probability), with news."""
@@ -178,7 +193,7 @@ async def breakouts(limit: int = Query(default=10, ge=1, le=20)) -> dict[str, An
         "label": LABEL, "title": "Breakout watchlist", "count": len(ranked), "stocks": top,
         "market": market_state(datetime.now(timezone.utc), premium_market.last_tick() or None) if _live() else _market_for("NIFTY"),
         "method": "Stocks within 2% below their nearest resistance, ranked by a 0-100 score from proximity, volume expansion, trend, momentum and VWAP.",
-        "accuracy": {"validated": False, "note": "This score is not a probability. No historical test of this rule exists yet, so no success rate is claimed."},
+        "accuracy": await _accuracy(),
         "news_note": "Headlines come from Google News and are shown as published. They are not verified by this app and may be unrelated or delayed.",
     }
 

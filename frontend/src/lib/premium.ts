@@ -172,12 +172,28 @@ export interface BreakoutRow {
   news: NewsBlock;
 }
 
+export interface Backtest {
+  setups: number;
+  successes: number;
+  hit_rate_pct: number | null;
+  ci95_low_pct: number | null;
+  ci95_high_pct: number | null;
+  stops: number;
+  timeouts: number;
+  sessions_tested: number;
+  symbols_tested: number;
+  period: [string, string] | null;
+  by_score_band: { band: string; setups: number; hit_rate_pct: number | null }[];
+  definition: string;
+  created_at: string;
+}
+
 export interface BreakoutResponse {
   count: number;
   stocks: BreakoutRow[];
   market: MarketInfo;
   method: string;
-  accuracy: { validated: boolean; note: string };
+  accuracy: { validated: boolean; note: string; backtest?: Backtest };
   news_note: string;
 }
 
