@@ -16,3 +16,12 @@ def test_words_must_start_at_a_word_boundary_and_summary_counts():
     out = s.summarize(items)
     assert out["counts"] == {"Positive": 1, "Negative": 1, "Mixed": 0, "Neutral": 1} and out["overall"] == "Mixed" and "wrong" in out["note"]
     assert s.summarize([])["overall"] == "None"
+
+
+def test_a_deal_topic_is_not_a_tone_and_boilerplate_is_removed():
+    from premium import announcements as an
+
+    assert s.read("Company has informed the Exchange about Acquisition")["tone"] == "Neutral"
+    assert s.read("Acquisition")["topic"] == "Deal / order"
+    t = an.parse([{"desc": "Press Release", "attchmntText": "Tata Consultancy Services Limited has informed the Exchange regarding a press release dated October 01, 2026"}])[0]["title"]
+    assert t == "Press Release: A press release dated October 01, 2026"
