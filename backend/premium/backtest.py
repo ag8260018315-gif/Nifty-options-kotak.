@@ -97,15 +97,17 @@ def observe_session(symbol: str, day: str, bars: list[dict[str, Any]], prev: dic
     return out
 
 
-def observe(symbols: dict[str, list[tuple[str, list[dict[str, Any]]]]], rule: Rule) -> list[tuple]:
-    """`symbols`: symbol -> [(trading_day, 1-minute bars)] oldest first."""
+def observe(symbols: dict[str, list[tuple[str, list[dict[str, Any]]]]], rule: Rule, progress: Any = None) -> list[tuple]:
+    """`symbols`: symbol -> [(trading_day, 1-minute bars)] oldest first. `progress(done, total, symbol)` is called after each stock."""
     obs: list[tuple] = []
-    for symbol, days in symbols.items():
+    for number, (symbol, days) in enumerate(symbols.items(), start=1):
         prev = None
         for day, bars in days:
             if len(bars) > MIN_BARS + rule.horizon_minutes:
                 obs.extend(observe_session(symbol, day, bars, prev, rule))
             prev = session_levels(bars) or prev
+        if progress:
+            progress(number, len(symbols), symbol)
     return obs
 
 
@@ -158,8 +160,8 @@ def cross_section(obs: list[tuple], rule: Rule, top_n: int = TOP_N) -> dict[str,
     return {"pooled": pooled, "day_diff": day_diff, "day_full": day_full, "days": sorted(per_day), "bands": {f"{a}-{min(b, 100)}": v for (a, b), v in bands.items()}}
 
 
-def run(symbols: dict[str, list[tuple[str, list[dict[str, Any]]]]], rule: Rule, top_n: int = TOP_N) -> dict[str, Any]:
-    return cross_section(observe(symbols, rule), rule, top_n)
+def run(symbols: dict[str, list[tuple[str, list[dict[str, Any]]]]], rule: Rule, top_n: int = TOP_N, progress: Any = None) -> dict[str, Any]:
+    return cross_section(observe(symbols, rule, progress), rule, top_n)
 
 
 def wilson(successes: int, n: int, z: float = 1.96) -> tuple[float, float]:
