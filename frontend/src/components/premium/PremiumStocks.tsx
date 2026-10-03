@@ -191,7 +191,7 @@ export default function PremiumStocks() {
             </span>
           </div>
         )}
-        <p className="border-t border-[#202b42] px-3 py-2 text-[10px] leading-relaxed text-slate-600">The list signal is a quick read of recent candles. Open a stock for the full signal engine, its trade setup and its tested history.</p>
+        <p className="border-t border-[#202b42] px-3 py-2 text-[10px] leading-relaxed text-slate-600">The list signal is a quick read of recent candles (the last recorded session while the market is closed). Open a stock for the full signal engine, its trade setup and its tested history.</p>
       </section>
     </div>
   );

@@ -4,7 +4,7 @@ import { LevelsCard, QuoteHeader, SignalCard, TrendCard, VolumeCard } from "@/co
 import ChartToolbar from "@/components/premium/ChartToolbar";
 import PriceChart, { type ChartOptions } from "@/components/premium/PriceChart";
 import { EngineCard, PatternsCard, SetupCard } from "@/components/premium/StockPanels";
-import type { Detail, Interval } from "@/lib/premium";
+import { sessionLabel, type Detail, type Interval } from "@/lib/premium";
 
 interface Props {
   detail: Detail;
@@ -28,6 +28,9 @@ export default function AnalysisView({ detail, interval, onInterval, ema, onEma,
       {!hideHeader && <QuoteHeader name={detail.name} quote={detail.quote} market={detail.market} />}
       <div className="rounded-lg border border-[#202b42] bg-[#0c0f17]/95 p-3">
         <ChartToolbar interval={interval} onInterval={onInterval} options={options} onOptions={setOptions} hasVolume={hasVolume} hasEngine={engine !== null} ema={ema} onEma={onEma} />
+        {analysis.session_day && (
+          <p data-testid="session-banner" className="mb-3 rounded-md border border-zinc-600/50 bg-zinc-900/60 px-3 py-2 text-[11px] leading-relaxed text-zinc-300">The market is closed and nothing has traded today, so this chart shows the last recorded session, <span className="font-semibold text-white">{sessionLabel(analysis.session_day)}</span>. Candle times are from that day.</p>
+        )}
         {interval >= 30 && analysis.history_available === false && (
           <p data-testid="history-missing" className="mb-3 rounded-md border border-amber-400/25 bg-amber-400/5 px-3 py-2 text-[11px] leading-relaxed text-amber-200">Longer timeframes need stored history, and none is saved for {detail.name} yet. The owner can load it with the history import tool (tools/import_upstox_index_history.py, add --stocks for stocks). Until then this chart only has what was recorded today.</p>
         )}

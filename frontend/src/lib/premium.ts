@@ -120,6 +120,7 @@ export interface Analysis {
   bars_closed: number;
   bars_required: number;
   ema_periods?: [number, number];
+  session_day?: string | null; // set when the market is closed and today has no candles: the day of the session shown instead
   history_available?: boolean;
   history_bars?: number;
   candles: Candle[];
@@ -436,6 +437,12 @@ export function clockTime(iso: string | null | undefined): string {
   if (!iso) return "—";
   const date = new Date(iso);
   return Number.isNaN(date.getTime()) ? "—" : date.toLocaleString("en-IN", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit", hour12: false, timeZone: "Asia/Kolkata" }) + " IST";
+}
+
+// "Fri, 02 Oct" for an ISO date such as 2026-10-02.
+export function sessionLabel(isoDate: string): string {
+  const date = new Date(`${isoDate}T00:00:00+05:30`);
+  return Number.isNaN(date.getTime()) ? isoDate : date.toLocaleDateString("en-IN", { weekday: "short", day: "2-digit", month: "short", timeZone: "Asia/Kolkata" });
 }
 
 export const DEFAULT_EMA: [number, number] = [9, 20];

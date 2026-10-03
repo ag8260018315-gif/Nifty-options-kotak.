@@ -52,6 +52,7 @@ class PremiumMarket:
         self._dirty: dict[str, set[int]] = {}
         self._loaded: set[tuple[str, str]] = set()
         self._prev_cache: dict[tuple[str, str], dict[str, float] | None] = {}
+        self._last_session_cache: dict[str, tuple[str, tuple[str, list[dict[str, Any]]] | None]] = {}
         self._last_flush = 0.0
         self.collection_override: Any | None = None  # tests inject a fake collection
         self.quotes_override: Any | None = None
@@ -238,6 +239,25 @@ class PremiumMarket:
             logger.warning("PREMIUM_DAY_BARS_ERROR kind=%s", type(exc).__name__)
             return []
         return [{k: d[k] for k in ("time", "open", "high", "low", "close", "volume") if k in d} for d in docs]
+
+    async def last_session(self, symbol: str, now: datetime | None = None) -> tuple[str, list[dict[str, Any]]] | None:
+        """(trading day, 1-minute candles) of the latest earlier session with stored candles, for weekends and holidays when today has
+        none. Past sessions never change, so the result is kept in memory for the rest of the day."""
+        today = (now or datetime.now(timezone.utc)).astimezone(IST).date().isoformat()
+        cached = self._last_session_cache.get(symbol)
+        if cached and cached[0] == today:
+            return cached[1]
+        result = None
+        try:
+            last = await self._col().find_one({"symbol": symbol, "trading_day": {"$lt": today}}, {"trading_day": 1}, sort=[("trading_day", -1)])
+            if last:
+                bars = await self.bars_for_day(symbol, last["trading_day"])
+                result = (last["trading_day"], bars) if bars else None
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("PREMIUM_LAST_SESSION_ERROR kind=%s", type(exc).__name__)
+            return None
+        self._last_session_cache[symbol] = (today, result)
+        return result
 
     async def previous_session(self, symbol: str, now: datetime | None = None) -> dict[str, float] | None:
         """High, low and close of the latest earlier session that has stored candles (None if there is none yet)."""

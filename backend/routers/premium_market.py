@@ -25,7 +25,7 @@ from premium.stockinfo import name_of, sector_of, sectors
 from premium.timeframes import DAY, LONG_FRAMES, build_long_bars, day_start, to_daily
 from research import stock_history
 from premium.breakout import breakout_setup
-from premium.market import IST, market_state, premium_market
+from premium.market import IST, market_hours, market_state, premium_market
 from premium.universe import INDEX_NAMES
 
 premium_market.configure_static()  # the stock list exists even before the feed connects
@@ -66,10 +66,11 @@ async def _bars(symbol: str) -> tuple[list[dict[str, Any]], bool]:
     return await premium_market.today_bars(symbol), symbol not in INDEX_NAMES
 
 
-async def _prev_session(symbol: str) -> dict[str, float] | None:
+async def _prev_session(symbol: str, before: date | None = None) -> dict[str, float] | None:
+    """High, low and close of the latest session before `before` (default: today)."""
+    today = before or datetime.now(timezone.utc).astimezone(IST).date()
     if symbol not in NIFTY_INDICES:
-        return await premium_market.previous_session(symbol)
-    today = datetime.now(timezone.utc).astimezone(IST).date()
+        return await premium_market.previous_session(symbol, datetime(today.year, today.month, today.day, 12, tzinfo=IST))
     key = (symbol, today.isoformat())
     if key in _prev_cache:
         return _prev_cache[key]
@@ -84,14 +85,38 @@ async def _prev_session(symbol: str) -> dict[str, float] | None:
     return result
 
 
+async def _last_session(symbol: str, now: datetime) -> tuple[date, list[dict[str, Any]]] | None:
+    """The latest earlier session with recorded candles. Used when today has none (weekend, holiday, before the open)."""
+    if symbol in NIFTY_INDICES:
+        today = now.astimezone(IST).date()
+        for back in range(1, 8):
+            day = today - timedelta(days=back)
+            candles = (await candle_store.get(symbol, 1, day))["candles"]
+            if candles:
+                return day, [{**c, "volume": 0} for c in candles]
+        return None
+    found = await premium_market.last_session(symbol, now)
+    return (date.fromisoformat(found[0]), found[1]) if found else None
+
+
 async def _analyse(symbol: str, interval: int, include_series: bool = True, ema: tuple[int, int] = (9, 20)) -> dict[str, Any]:
     if interval in LONG_FRAMES:
         return await _analyse_long(symbol, interval, include_series, ema)
     quote = (_index_quote(symbol)[0] if symbol in INDICES else premium_market.public_quote(symbol))
     bars, has_volume = await _bars(symbol)
     now = datetime.now(timezone.utc)
-    result = analyse(resample_ohlcv(bars, interval), interval, await _prev_session(symbol), now.timestamp(), has_volume,
-                     quote.get("high") if quote else None, quote.get("low") if quote else None, include_series, ema_fast=ema[0], ema_slow=ema[1])
+    day_high, day_low = (quote.get("high"), quote.get("low")) if quote else (None, None)
+    session_day: date | None = None
+    if not bars and not market_hours(now):
+        # nothing recorded today and the market is closed: show the last recorded session, clearly labelled, instead of an empty chart.
+        # (During market hours an empty day is left empty: yesterday's candles must never pass for live ones.)
+        found = await _last_session(symbol, now)
+        if found:
+            session_day, bars = found
+            day_high, day_low = max(b["high"] for b in bars), min(b["low"] for b in bars)
+    prev = await _prev_session(symbol, session_day)
+    result = analyse(resample_ohlcv(bars, interval), interval, prev, now.timestamp(), has_volume, day_high, day_low, include_series, ema_fast=ema[0], ema_slow=ema[1])
+    result["session_day"] = session_day.isoformat() if session_day else None
     return result
 
 
@@ -230,23 +255,38 @@ async def _quick_analysis(symbol: str) -> dict[str, Any]:
     return chosen
 
 
-async def _quick(symbol: str) -> dict[str, Any]:
-    chosen = await _quick_analysis(symbol)
+def _summary(chosen: dict[str, Any]) -> dict[str, Any]:
     sig = chosen["signal"]
     return {"action": sig["action"], "score": sig.get("score", 0), "strength": sig.get("strength"), "interval": chosen["interval"], "trend": chosen["trend"]["label"],
             "relative_volume": (chosen.get("volume") or {}).get("relative"), "reasons": sig.get("reasons", [])[:4],
             "nearest_support": sig.get("nearest_support"), "nearest_resistance": sig.get("nearest_resistance"), "bars_closed": chosen["bars_closed"]}
 
 
+async def _quick(symbol: str) -> dict[str, Any]:
+    return _summary(await _quick_analysis(symbol))
+
+
+async def _quick_all(symbols: list[str]) -> dict[str, dict[str, Any]]:
+    """Quick analysis of many stocks at once. Each may need a database read (the last session while the market is closed), so they run
+    a few at a time instead of one after the other."""
+    gate = asyncio.Semaphore(12)
+
+    async def one(symbol: str) -> tuple[str, dict[str, Any]]:
+        async with gate:
+            return symbol, await _quick_analysis(symbol)
+
+    return dict(await asyncio.gather(*(one(s) for s in symbols)))
+
+
 @router.get("/stocks")
 async def stocks() -> dict[str, Any]:
     """Every configured stock. A stock with no price yet (market closed before any tick) is listed with quote null."""
     await premium_market.ensure_quotes()
-    rows = []
-    for symbol in sorted(premium_market.symbols("stock")):
-        quote = premium_market.public_quote(symbol)
-        signal = await _quick(symbol) if quote is not None else {"action": "BUILDING", "score": 0, "strength": None, "interval": 1, "trend": "BUILDING", "relative_volume": None, "reasons": [], "nearest_support": None, "nearest_resistance": None, "bars_closed": 0}
-        rows.append({"symbol": symbol, "name": name_of(symbol), "sector": sector_of(symbol), "quote": quote, "signal": signal})
+    symbols = sorted(premium_market.symbols("stock"))
+    quotes = {s: premium_market.public_quote(s) for s in symbols}
+    analyses = await _quick_all([s for s in symbols if quotes[s] is not None])
+    empty = {"action": "BUILDING", "score": 0, "strength": None, "interval": 1, "trend": "BUILDING", "relative_volume": None, "reasons": [], "nearest_support": None, "nearest_resistance": None, "bars_closed": 0}
+    rows = [{"symbol": s, "name": name_of(s), "sector": sector_of(s), "quote": quotes[s], "signal": _summary(analyses[s]) if quotes[s] is not None else empty} for s in symbols]
     market = market_state(datetime.now(timezone.utc), premium_market.last_tick() or None) if _live() else _market_for("NIFTY")
     return {"label": LABEL, "market": market, "count": sum(1 for r in rows if r["quote"]), "configured": len(rows), "stocks": rows}
 
@@ -270,11 +310,10 @@ async def breakouts(limit: int = Query(default=10, ge=1, le=20)) -> dict[str, An
     Being listed does not mean the stock will break out; the historical test result is returned alongside."""
     await premium_market.ensure_quotes()
     ranked = []
-    for symbol in premium_market.symbols("stock"):
-        quote = premium_market.public_quote(symbol)
-        if quote is None:
-            continue
-        setup = breakout_setup(await _quick_analysis(symbol))
+    quoted = {s: q for s in premium_market.symbols("stock") if (q := premium_market.public_quote(s)) is not None}
+    analyses = await _quick_all(list(quoted))
+    for symbol, quote in quoted.items():
+        setup = breakout_setup(analyses[symbol])
         if setup:
             ranked.append({"symbol": symbol, "quote": quote, "setup": setup})
     ranked.sort(key=lambda r: (-r["setup"]["score"], r["setup"]["distance_pct"]))
@@ -295,11 +334,10 @@ async def breakouts(limit: int = Query(default=10, ge=1, le=20)) -> dict[str, An
 async def opportunities(limit: int = Query(default=8, ge=1, le=20)) -> dict[str, Any]:
     await premium_market.ensure_quotes()
     ranked = []
-    for symbol in premium_market.symbols("stock"):
-        quote = premium_market.public_quote(symbol)
-        if quote is None:
-            continue
-        sig = await _quick(symbol)
+    quoted = {s: q for s in premium_market.symbols("stock") if (q := premium_market.public_quote(s)) is not None}
+    analyses = await _quick_all(list(quoted))
+    for symbol, quote in quoted.items():
+        sig = _summary(analyses[symbol])
         if sig["action"] == "BUY":
             ranked.append({"symbol": symbol, "quote": quote, "signal": sig})
     ranked.sort(key=lambda r: -r["signal"]["score"])

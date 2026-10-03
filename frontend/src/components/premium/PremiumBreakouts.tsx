@@ -100,7 +100,7 @@ export default function PremiumBreakouts() {
       </div>
       {query.isError && <p className="p-4 text-xs text-slate-500">The watchlist is unavailable right now.</p>}
       {data && data.stocks.length === 0 && (
-        <p data-testid="breakout-empty" className="p-4 text-xs leading-relaxed text-slate-500">No stock is within 2% below a resistance level with enough candles right now. Candles build from live prices during market hours (about 35 minutes after the open), so this list is empty when the market is closed.</p>
+        <p data-testid="breakout-empty" className="p-4 text-xs leading-relaxed text-slate-500">No stock is within 2% below a resistance level with enough candles right now. Candles build from live prices during market hours (about 35 minutes after the open), so this list can be empty early in the session. While the market is closed it uses the last recorded session.</p>
       )}
       <ol className="divide-y divide-[#161e30]">
         {(data?.stocks ?? []).map((row, index) => (

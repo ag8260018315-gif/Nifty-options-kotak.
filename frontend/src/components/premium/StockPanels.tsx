@@ -1,6 +1,6 @@
 import { useState } from "react";
 
-import { clockTime, intervalName, price, signed, stamp, tickAge, tone, whole, type Analysis, type Bias, type DataStatus, type EngineSignal, type Performance, type PerformanceStats, type TradeSetup } from "@/lib/premium";
+import { clockTime, intervalName, sessionLabel, price, signed, stamp, tickAge, tone, whole, type Analysis, type Bias, type DataStatus, type EngineSignal, type Performance, type PerformanceStats, type TradeSetup } from "@/lib/premium";
 
 const box = "rounded-lg border border-[#202b42] bg-[#0c0f17]/95 p-3";
 const label = "text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-500";
@@ -99,7 +99,7 @@ export function EngineCard({ engine, analysis }: { engine: EngineSignal; analysi
       </ul>
       <p data-testid="engine-generated" className="mt-3 border-t border-[#202b42] pt-2 text-[10px] leading-relaxed text-slate-500">
         Generated {clockTime(engine.generated_at)}
-        {engine.as_of_candle ? ` · based on the ${stamp(engine.as_of_candle, engine.interval)} candle (closed candles only)` : ""}
+        {engine.as_of_candle ? ` · based on the ${stamp(engine.as_of_candle, engine.interval)} candle${analysis.session_day ? ` of ${sessionLabel(analysis.session_day)}` : ""} (closed candles only)` : ""}
         {` · latest price ${tickAge(engine.data.tick_age_seconds)}`}
       </p>
       <p className="mt-1 text-[10px] leading-relaxed text-slate-600">{engine.disclaimer}</p>
