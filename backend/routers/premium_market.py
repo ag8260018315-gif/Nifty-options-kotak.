@@ -17,6 +17,8 @@ import asyncio
 from premium import history as index_history
 from premium import news
 from premium.analysis import MIN_BARS, analyse, resample_ohlcv
+from premium.signal_engine import stock_signal
+from premium.stockinfo import name_of, sector_of, sectors
 from premium.timeframes import DAY, LONG_FRAMES, build_long_bars, day_start, to_daily
 from research import stock_history
 from premium.breakout import breakout_setup
@@ -27,7 +29,7 @@ premium_market.configure_static()  # the stock list exists even before the feed 
 router = APIRouter(prefix="/premium", tags=["premium"])
 NIFTY_INDICES = ("NIFTY", "BANKNIFTY", "FINNIFTY")
 INDICES = ("NIFTY", "BANKNIFTY", "FINNIFTY", "SENSEX")
-INTERVALS = (1, 5, 15, 60, 240, 1440, 10080)  # minutes: 1m 5m 15m 1h 4h 1D 1W
+INTERVALS = (1, 5, 15, 30, 60, 240, 1440, 10080, 43200)  # minutes: 1m 5m 15m 30m 1h 4h 1D 1W 1M
 LONG_TAIL = 300  # candles returned for the long frames (indicators use the full history)
 _history_cache: dict[str, tuple[float, tuple[list, list]]] = {}
 HISTORY_TTL = 600.0
@@ -79,14 +81,14 @@ async def _prev_session(symbol: str) -> dict[str, float] | None:
     return result
 
 
-async def _analyse(symbol: str, interval: int, include_series: bool = True) -> dict[str, Any]:
+async def _analyse(symbol: str, interval: int, include_series: bool = True, ema: tuple[int, int] = (9, 20)) -> dict[str, Any]:
     if interval in LONG_FRAMES:
-        return await _analyse_long(symbol, interval, include_series)
+        return await _analyse_long(symbol, interval, include_series, ema)
     quote = (_index_quote(symbol)[0] if symbol in INDICES else premium_market.public_quote(symbol))
     bars, has_volume = await _bars(symbol)
     now = datetime.now(timezone.utc)
     result = analyse(resample_ohlcv(bars, interval), interval, await _prev_session(symbol), now.timestamp(), has_volume,
-                     quote.get("high") if quote else None, quote.get("low") if quote else None, include_series)
+                     quote.get("high") if quote else None, quote.get("low") if quote else None, include_series, ema_fast=ema[0], ema_slow=ema[1])
     return result
 
 
@@ -124,12 +126,16 @@ async def indices() -> dict[str, Any]:
 
 
 @router.get("/index/{symbol}")
-async def index_detail(symbol: str, interval: int = Query(default=1)) -> dict[str, Any]:
+async def index_detail(symbol: str, interval: int = Query(default=1), ema_fast: int = Query(default=9, ge=2, le=100), ema_slow: int = Query(default=20, ge=3, le=300)) -> dict[str, Any]:
     symbol = symbol.upper()
     if symbol not in INDICES or interval not in INTERVALS:
         raise HTTPException(status_code=422, detail="Unknown index or interval.")
+    if ema_slow <= ema_fast:
+        raise HTTPException(status_code=422, detail="The slow EMA must be longer than the fast EMA.")
     quote, _ = _index_quote(symbol)
-    return {"label": LABEL, "symbol": symbol, "name": INDEX_NAMES[symbol], "quote": _clean(quote), "market": _market_for(symbol), "analysis": await _analyse(symbol, interval)}
+    market = _market_for(symbol)
+    analysis = await _analyse(symbol, interval, ema=(ema_fast, ema_slow))
+    return {"label": LABEL, "symbol": symbol, "name": INDEX_NAMES[symbol], "quote": _clean(quote), "market": market, "analysis": analysis, "engine": stock_signal(analysis, market, interval)}
 
 
 async def _history(symbol: str) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
@@ -145,8 +151,14 @@ async def _history(symbol: str) -> tuple[list[dict[str, Any]], list[dict[str, An
             fine = await index_history.load(db, symbol, "30m")
             daily = await index_history.load(db, symbol, "1d")
         else:
+            minute_days = set()
             for _day, bars in await stock_history.load_symbol(research_db, symbol):
                 fine.extend(bars)
+                minute_days.update(day_start(b["time"]) for b in bars)
+            # imported 30-minute / daily history (tools/import_upstox_index_history.py --stocks); 1-minute data wins on days it covers
+            fine = [b for b in await index_history.load(db, symbol, "30m") if day_start(b["time"]) not in minute_days] + fine
+            fine.sort(key=lambda b: b["time"])
+            daily = await index_history.load(db, symbol, "1d")
         if fine or daily:
             extra = await _gap_bars(symbol, max(b["time"] for b in (fine + daily)))
             if extra:
@@ -182,7 +194,7 @@ async def _gap_bars(symbol: str, last_time: int) -> list[dict[str, Any]]:
     return extra
 
 
-async def _analyse_long(symbol: str, minutes: int, include_series: bool = True) -> dict[str, Any]:
+async def _analyse_long(symbol: str, minutes: int, include_series: bool = True, ema: tuple[int, int] = (9, 20)) -> dict[str, Any]:
     quote = _index_quote(symbol)[0] if symbol in INDICES else premium_market.public_quote(symbol)
     today, has_volume = await _bars(symbol)
     fine, daily = await _history(symbol)
@@ -190,12 +202,12 @@ async def _analyse_long(symbol: str, minutes: int, include_series: bool = True) 
     now = datetime.now(timezone.utc).timestamp()
     prev = None
     if minutes >= DAY:  # pivots from the previous CLOSED candle of the same size
-        closed = [b for b in bars if b["time"] + minutes * 60 <= now]
+        closed = [b for b in bars if b.get("end", b["time"] + minutes * 60) <= now]
         if closed:
             prev = {"high": closed[-1]["high"], "low": closed[-1]["low"], "close": closed[-1]["close"]}
     else:
         prev = await _prev_session(symbol)
-    result = analyse(bars, minutes, prev, now, has_volume, None, None, include_series, tail=LONG_TAIL)
+    result = analyse(bars, minutes, prev, now, has_volume, None, None, include_series, tail=LONG_TAIL, ema_fast=ema[0], ema_slow=ema[1])
     result["history_available"] = bool(fine or daily)
     result["history_bars"] = len(bars)
     return result
@@ -231,7 +243,7 @@ async def stocks() -> dict[str, Any]:
     for symbol in sorted(premium_market.symbols("stock")):
         quote = premium_market.public_quote(symbol)
         signal = await _quick(symbol) if quote is not None else {"action": "BUILDING", "score": 0, "strength": None, "interval": 1, "trend": "BUILDING", "relative_volume": None, "reasons": [], "nearest_support": None, "nearest_resistance": None, "bars_closed": 0}
-        rows.append({"symbol": symbol, "quote": quote, "signal": signal})
+        rows.append({"symbol": symbol, "name": name_of(symbol), "sector": sector_of(symbol), "quote": quote, "signal": signal})
     market = market_state(datetime.now(timezone.utc), premium_market.last_tick() or None) if _live() else _market_for("NIFTY")
     return {"label": LABEL, "market": market, "count": sum(1 for r in rows if r["quote"]), "configured": len(rows), "stocks": rows}
 
@@ -293,9 +305,20 @@ async def opportunities(limit: int = Query(default=8, ge=1, le=20)) -> dict[str,
 
 
 @router.get("/stock/{symbol}")
-async def stock_detail(symbol: str, interval: int = Query(default=1)) -> dict[str, Any]:
+async def stock_detail(symbol: str, interval: int = Query(default=1), ema_fast: int = Query(default=9, ge=2, le=100), ema_slow: int = Query(default=20, ge=3, le=300)) -> dict[str, Any]:
     symbol = symbol.upper()
     if symbol not in premium_market.symbols("stock") or interval not in INTERVALS:
         raise HTTPException(status_code=404, detail="Unknown stock or interval.")
-    return {"label": LABEL, "symbol": symbol, "name": premium_market.names.get(symbol, symbol), "quote": premium_market.public_quote(symbol),
-            "market": _market_for(symbol), "analysis": await _analyse(symbol, interval)}
+    if ema_slow <= ema_fast:
+        raise HTTPException(status_code=422, detail="The slow EMA must be longer than the fast EMA.")
+    await premium_market.ensure_quotes()
+    market = _market_for(symbol)
+    analysis = await _analyse(symbol, interval, ema=(ema_fast, ema_slow))
+    return {"label": LABEL, "symbol": symbol, "name": name_of(symbol), "sector": sector_of(symbol), "quote": premium_market.public_quote(symbol),
+            "market": market, "analysis": analysis, "engine": stock_signal(analysis, market, interval)}
+
+
+@router.get("/stocks-meta")
+async def stocks_meta() -> dict[str, Any]:
+    """Names and sectors for the filters. Static: no market data."""
+    return {"label": LABEL, "sectors": sectors(), "stocks": [{"symbol": s, "name": name_of(s), "sector": sector_of(s)} for s in sorted(premium_market.symbols("stock"))]}

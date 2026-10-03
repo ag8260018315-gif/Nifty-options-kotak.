@@ -48,7 +48,9 @@ def static_universe() -> tuple[dict[str, str], dict[str, str]]:
     names = {sym: name for sym, name in INDEX_NAMES.items()}
     kinds = {sym: "index" for sym in INDEX_NAMES}
     for sym in stock_symbols():
-        names[sym], kinds[sym] = sym, "stock"
+        from premium.stockinfo import name_of
+
+        names[sym], kinds[sym] = name_of(sym), "stock"
     return names, kinds
 
 
@@ -117,7 +119,9 @@ async def build_plan() -> PremiumPlan:
         key = f"nse_cm|{info['token']}"
         plan.scrip_tokens.append(key)
         plan.symbol_by_key[key] = sym
-        plan.names[sym], plan.kinds[sym] = sym, "stock"
+        from premium.stockinfo import name_of
+
+        plan.names[sym], plan.kinds[sym] = name_of(sym), "stock"
     logger.info("PREMIUM_PLAN stocks=%s unresolved=%s", len(plan.scrip_tokens), len(plan.unresolved))
     return plan
 

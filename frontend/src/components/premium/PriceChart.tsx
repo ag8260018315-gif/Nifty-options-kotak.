@@ -3,7 +3,7 @@ import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointer
 import { intervalName, price, stamp, whole, type Analysis } from "@/lib/premium";
 
 // Interactive SVG candlestick chart: hover for values, drag to pan, wheel or +/- to zoom.
-// Overlays: EMA 9/21, Bollinger bands, VWAP, support/resistance and pivots. Panes: volume, RSI or MACD.
+// Overlays: fast/slow EMA (default 9/20), Bollinger bands, VWAP, support/resistance and pivots. Panes: volume, RSI or MACD.
 
 export interface ChartOptions {
   ema: boolean;
@@ -152,7 +152,7 @@ export default function PriceChart({ analysis, options }: { analysis: Analysis; 
         <p data-testid="chart-readout" className="font-mono text-[11px] tabular-nums text-slate-400">
           <span className="text-slate-500">{stamp(bar.time, analysis.interval)}</span> O {price(bar.open)} H {price(bar.high)} L {price(bar.low)} <span className={bar.close >= bar.open ? "text-emerald-300" : "text-rose-300"}>C {price(bar.close)}</span>
           {hasVolume && <> V {whole(bar.volume)}</>}
-          {options.ema && <> <span className="text-amber-300">E9 {price(at(series?.ema9))}</span> <span className="text-sky-300">E21 {price(at(series?.ema21))}</span></>}
+          {options.ema && <> <span className="text-amber-300">E{analysis.ema_periods?.[0] ?? 9} {price(at(series?.ema_fast))}</span> <span className="text-sky-300">E{analysis.ema_periods?.[1] ?? 20} {price(at(series?.ema_slow))}</span></>}
         </p>
         <div className="flex items-center gap-1" role="group" aria-label="Chart zoom">
           <button type="button" aria-label="Zoom out" onClick={() => zoom(1.3)} className="h-7 w-7 rounded-md border border-[#26334b] text-sm text-slate-300 hover:bg-[#1a2336]">−</button>
@@ -208,8 +208,8 @@ export default function PriceChart({ analysis, options }: { analysis: Analysis; 
         })}
         {options.ema && series && (
           <>
-            <path d={pathFor(series.ema9, start, end, x, yPrice)} fill="none" stroke="#fbbf24" strokeWidth={1.4} />
-            <path d={pathFor(series.ema21, start, end, x, yPrice)} fill="none" stroke="#38bdf8" strokeWidth={1.4} />
+            <path d={pathFor(series.ema_fast, start, end, x, yPrice)} fill="none" stroke="#fbbf24" strokeWidth={1.4} />
+            <path d={pathFor(series.ema_slow, start, end, x, yPrice)} fill="none" stroke="#38bdf8" strokeWidth={1.4} />
           </>
         )}
         {options.vwap && series && <path d={pathFor(series.vwap, start, end, x, yPrice)} fill="none" stroke="#f472b6" strokeWidth={1.4} strokeDasharray="2 3" />}
@@ -259,7 +259,7 @@ export default function PriceChart({ analysis, options }: { analysis: Analysis; 
         )}
       </svg>
       <p className="flex flex-wrap gap-x-4 gap-y-1 text-[10px] text-slate-500">
-        {options.ema && <span><span className="text-amber-300">━</span> EMA 9 <span className="text-sky-300">━</span> EMA 21</span>}
+        {options.ema && <span><span className="text-amber-300">━</span> EMA {analysis.ema_periods?.[0] ?? 9} <span className="text-sky-300">━</span> EMA {analysis.ema_periods?.[1] ?? 20}</span>}
         {options.bb && <span><span className="text-violet-300">━</span> Bollinger 20,2</span>}
         {options.vwap && <span><span className="text-pink-300">┅</span> VWAP</span>}
         {options.levels && <span><span className="text-emerald-300">┅</span> support <span className="text-rose-300">┅</span> resistance <span className="text-sky-300">┅</span> pivot</span>}
