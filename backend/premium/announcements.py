@@ -5,6 +5,7 @@ does, the answer is `unavailable`, never an invented item. We keep only the titl
 link; we do not copy document text. Cached 15 minutes (5 on failure). Run tools/probe_announcements.py to see what NSE
 returns to YOUR server. BSE needs a scrip-code mapping and is not included yet."""
 import asyncio
+import re
 import time
 from datetime import datetime, timezone
 from typing import Any
@@ -41,6 +42,15 @@ def _when(text: str) -> str | None:
     return None
 
 
+_BOILERPLATE = re.compile(r"^.{0,80}?\b(?:has|have)\s+(?:informed|intimated|submitted)\s+(?:the\s+)?(?:exchange|stock exchanges?)\s*(?:regarding|about|that|on|of)?\s*", re.I)
+
+
+def _plain(detail: str) -> str:
+    """Drop the stock-exchange boilerplate ("X Limited has informed the Exchange regarding ...") so the real subject leads."""
+    short = _BOILERPLATE.sub("", detail).strip()
+    return (short[:1].upper() + short[1:]) if short else detail
+
+
 def parse(payload: Any, limit: int = 12) -> list[dict[str, Any]]:
     """Items from NSE's response (a list, or {"data": [...]}). Unknown shapes give an empty list. Only https links are kept."""
     rows = payload.get("data") if isinstance(payload, dict) else payload
@@ -49,7 +59,7 @@ def parse(payload: Any, limit: int = 12) -> list[dict[str, Any]]:
         if not isinstance(row, dict):
             continue
         category = _first(row, "desc", "subject", "category")
-        detail = _first(row, "attchmntText", "attachmentText", "details", "sm_name")
+        detail = _plain(_first(row, "attchmntText", "attachmentText", "details", "sm_name"))
         link = _first(row, "attchmntFile", "attachmentFile", "link")
         title = (f"{category}: {detail}" if category and detail else category or detail)[:300]
         if not title:

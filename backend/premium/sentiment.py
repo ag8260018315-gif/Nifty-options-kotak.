@@ -8,7 +8,7 @@ from typing import Any
 
 POSITIVE = ("profit rises", "profit jumps", "profit up", "net profit up", "record profit", "beats estimates", "beat estimates", "strong results", "upgrade", "upgraded",
             "raises target", "buy rating", "outperform", "order win", "bags order", "wins order", "secures order", "new order", "contract win", "dividend", "bonus",
-            "buyback", "acquires", "acquisition", "expansion", "approval", "approved", "all-time high", "record high", "surge", "rally", "gains", "growth", "wins")
+            "buyback", "all-time high", "record high", "surge", "rally")
 NEGATIVE = ("profit falls", "profit drops", "profit down", "net loss", "loss widens", "misses estimates", "miss estimates", "weak results", "downgrade", "downgraded",
             "cuts target", "sell rating", "underperform", "penalty", "fine", "probe", "investigation", "raid", "fraud", "default", "resigns", "resignation", "lawsuit",
             "ban", "recall", "shutdown", "plunge", "slump", "falls", "declines", "tumbles", "slashes", "warning", "insolvency", "delisting")
