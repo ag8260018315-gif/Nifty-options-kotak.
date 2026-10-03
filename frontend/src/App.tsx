@@ -5,6 +5,7 @@ import { useState } from "react";
 
 import AccessAdmin, { fetchPendingRequests } from "@/components/AccessAdmin";
 import Home from "@/pages/Home";
+import Premium from "@/pages/Premium";
 import Landing from "@/pages/Landing";
 import Upgrade from "@/pages/Upgrade";
 import { ApiError, apiGet, apiPost } from "@/lib/api";
@@ -14,9 +15,11 @@ interface AccessUser {
   email: string | null;
   role: "admin" | "viewer" | "trial" | "expired";
   trial_ends_at?: number | null;
+  premium?: boolean;
+  premium_until?: number | null;
 }
 
-const OPEN_ACCESS: AccessUser = { auth_required: false, email: null, role: "admin" };
+const OPEN_ACCESS: AccessUser = { auth_required: false, email: null, role: "admin", premium: true };
 
 // null = signed out. A backend without the sign-in routes (404) is treated as open, like before.
 async function fetchAccess(): Promise<AccessUser | null> {
@@ -87,6 +90,7 @@ function SignedInBar({ user }: { user: AccessUser }) {
     <div data-testid="signed-in-bar" className="fixed bottom-4 left-4 z-40 flex items-center gap-3 rounded-full border border-[#202b42] bg-[#0c0f17]/95 py-1.5 pl-4 pr-1.5 text-xs text-slate-400 shadow-lg backdrop-blur">
       <span className="max-w-[40vw] truncate">{user.email}</span>
       {isOwner && <span className="rounded-full bg-[#1f2a41] px-2 py-0.5 text-[10px] text-slate-300">Owner</span>}
+      {!isOwner && user.premium && <span data-testid="premium-badge" className="rounded-full border border-amber-300/40 bg-amber-300/10 px-2 py-0.5 text-[10px] font-semibold text-amber-300">Premium</span>}
       {daysLeft !== null && (
         <span data-testid="trial-badge" title="Your free trial ends automatically. Nothing is charged." className="rounded-full border border-emerald-400/25 bg-emerald-400/[0.08] px-2 py-0.5 text-[10px] font-semibold text-emerald-300">
           Free trial: {daysLeft === 0 ? "ends today" : `${daysLeft} ${daysLeft === 1 ? "day" : "days"} left`}
@@ -113,7 +117,7 @@ function ExpiredTrial({ user }: { user: AccessUser }) {
   return <Upgrade email={user.email} onSignOut={() => void signOut()} onApproved={() => void queryClient.invalidateQueries({ queryKey: ["access-me"] })} />;
 }
 
-function AccessGate() {
+function AccessGate({ page = "home" }: { page?: "home" | "premium" }) {
   const queryClient = useQueryClient();
   const access = useQuery({ queryKey: ["access-me"], queryFn: fetchAccess, refetchInterval: 60_000, retry: 1 });
 
@@ -125,7 +129,7 @@ function AccessGate() {
   if (access.data.role === "expired") return <ExpiredTrial user={access.data} />;
   return (
     <>
-      <Home isOwner={access.data.role === "admin"} />
+      {page === "premium" ? <Premium user={{ email: access.data.email, premium: access.data.premium === true, premium_until: access.data.premium_until }} /> : <Home isOwner={access.data.role === "admin"} />}
       {access.data.auth_required && access.data.email && <SignedInBar user={access.data} />}
     </>
   );
@@ -136,6 +140,7 @@ export default function App() {
   return (
     <Routes>
       <Route path="/" element={<AccessGate />} />
+      <Route path="/premium" element={<AccessGate page="premium" />} />
     </Routes>
   );
 }

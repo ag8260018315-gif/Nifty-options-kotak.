@@ -3,6 +3,10 @@
     {
       "source": "/api/:path*",
       "destination": "https://nifty-options-kotak.onrender.com/api/:path*"
+    },
+    {
+      "source": "/((?!api/).*)",
+      "destination": "/index.html"
     }
   ]
 }

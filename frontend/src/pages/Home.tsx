@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Link } from "react-router-dom";
 import { Activity, Bell, Check, ChevronDown, CircleHelp, Cloud, Download, KeyRound, LockKeyhole, RefreshCw, Save, Settings2, ShieldCheck, Sunrise, Wifi } from "lucide-react";
 import { toast } from "sonner";
 
@@ -658,6 +659,7 @@ export default function Home({ isOwner = true }: { isOwner?: boolean }) {
               </div>
             </div>
             <div className="flex items-center gap-2 xl:hidden">
+              <Link to="/premium" data-testid="premium-link" className="rounded-md border border-amber-300/50 bg-amber-300/10 px-3 py-1.5 text-xs font-semibold text-amber-300 transition-colors hover:bg-amber-300/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-300/50">★ Premium</Link>
               <Badge data-testid="mobile-mode-pill" className={`${modeStyles(modeLabel)} text-[10px]`}>{modeLabel}</Badge>
               {isOwner ? <Button data-testid="mobile-connect-kotak-button" variant="outline" size="sm" className="border-[#2a364f] bg-transparent text-slate-200" onClick={() => setConnectOpen(true)}>Connect</Button> : <span data-testid="mobile-owner-feed-label" className="rounded-md border border-[#2a364f] px-2 py-1 text-[10px] text-slate-400">Owner's feed</span>}
             </div>
@@ -680,6 +682,7 @@ export default function Home({ isOwner = true }: { isOwner?: boolean }) {
               {feedState === "EXPIRED" && (isOwner ? <button data-testid="banner-relogin-action" type="button" className="text-[10px] font-bold underline" onClick={() => setConnectOpen(true)}>RE-LOGIN</button> : <span data-testid="banner-owner-relogin" className="text-[10px] font-bold">WAITING FOR OWNER</span>)}
             </div>
             <div className="hidden items-center gap-2 xl:flex">
+              <Link to="/premium" data-testid="premium-link" className="rounded-md border border-amber-300/50 bg-amber-300/10 px-3 py-1.5 text-xs font-semibold text-amber-300 transition-colors hover:bg-amber-300/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-300/50">★ Premium</Link>
               <Badge data-testid="mode-pill" className={`${modeStyles(modeLabel)} text-[10px]`}><span className={`mr-1.5 size-1.5 rounded-full ${modeLabel === "LIVE" ? "bg-emerald-400" : "bg-indigo-400"}`} />{modeLabel}</Badge>
               {isOwner ? <Button data-testid="connect-kotak-button" size="sm" className="bg-[#e31837] text-white shadow-[0_0_20px_rgba(227,24,55,0.16)] hover:bg-[#c8102e]" onClick={() => setConnectOpen(true)}><KeyRound className="mr-2 size-3.5" />Connect Kotak Neo</Button> : <span data-testid="owner-feed-label" className="rounded-md border border-[#2a364f] px-3 py-1.5 text-xs text-slate-400">Live data via the owner's Kotak connection</span>}
             </div>

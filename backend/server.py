@@ -18,7 +18,8 @@ from lib.feed_worker import feed_worker
 from lib.access import require_user
 from lib.settings import settings
 from jobs.research_scheduler import run_forever as research_job
-from routers import access, ai, auth, dashboard, live_signals, public, research_api, trading
+from lib.premium import require_premium
+from routers import access, ai, auth, dashboard, live_signals, premium_market as premium_routes, public, research_api, trading
 
 
 # Startup runs before the yield, shutdown after it. Add your own setup/teardown here.
@@ -65,6 +66,8 @@ api_router.include_router(ai.router, dependencies=signed_in)
 api_router.include_router(live_signals.router, dependencies=signed_in)
 api_router.include_router(research_api.router, dependencies=signed_in)
 api_router.include_router(trading.router, dependencies=signed_in)
+# Premium data: the server verifies an active premium entitlement on EVERY route (403 otherwise).
+api_router.include_router(premium_routes.router, dependencies=[Depends(require_premium)])
 
 # Include the router in the main app
 app.include_router(api_router)

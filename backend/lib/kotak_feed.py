@@ -65,8 +65,9 @@ def _f(value: Any) -> float | None:
 
 
 class KotakSFeed:
-    def __init__(self, session: KotakSession, on_message: MessageHandler):
+    def __init__(self, session: KotakSession, on_message: MessageHandler, premium: Any | None = None):
         self.session = session
+        self.premium = premium  # premium.universe.PremiumPlan: extra SENSEX/stock subscriptions, handled separately
         self.on_message = on_message
         self.authenticated = False
         self.last_tick_at: float | None = None
@@ -74,7 +75,7 @@ class KotakSFeed:
         # "nse_fo|<token>" strings that the SDK has actually subscribed (not merely requested)
         self.subscribed_option_tokens: set[str] = set()
         self.subscribed_index_tokens: set[str] = set()
-        self.tick_counts: dict[str, int] = {"index": 0, "option": 0}
+        self.tick_counts: dict[str, int] = {"index": 0, "option": 0, "premium": 0}
         self._desired_options: set[str] = set()
         self._wake = asyncio.Event()
         self._ws: Any | None = None
@@ -82,6 +83,7 @@ class KotakSFeed:
         self._last_message_at = 0.0
         self._divider_reported = False
         self._handler_errors = 0
+        self._premium_subscribed_at: float | None = None
 
     # ------------------------------------------------------------------ public API
     async def run_once(self, index_tokens: list[str], option_tokens: list[str]) -> None:
@@ -120,6 +122,13 @@ class KotakSFeed:
         except SDKAuthenticationError as exc:
             raise FeedAuthError(f"Kotak SFeed authentication failed: {exc}") from exc
         finally:
+            if self._premium_subscribed_at is not None:
+                try:
+                    from premium.market import premium_market
+
+                    premium_market.note_disconnect(loop.time() - self._premium_subscribed_at)
+                except Exception:  # noqa: BLE001
+                    pass
             for task in tasks:
                 task.cancel()
             await asyncio.gather(*tasks, return_exceptions=True)
@@ -142,6 +151,16 @@ class KotakSFeed:
             self._last_message_at = loop.time()
             tick = self._to_tick(message)
             if tick is None:
+                continue
+            if tick["kind"] == "premium":
+                self.tick_counts["premium"] += 1
+                try:  # SENSEX / stock ticks feed the premium store only; they never touch NIFTY state
+                    from premium.market import premium_market
+
+                    premium_market.on_tick(tick)
+                    await premium_market.flush()
+                except Exception:  # noqa: BLE001
+                    logger.warning("PREMIUM_TICK_ERROR", exc_info=True)
                 continue
             self.last_tick_at = self._last_message_at
             self.tick_counts[tick["kind"]] += 1
@@ -170,11 +189,35 @@ class KotakSFeed:
             await ws.subscribe_index([_ws_token(value) for value in index_tokens])
             self.subscribed_index_tokens = set(index_tokens)
             logger.info("SFEED_SUBSCRIBED kind=index count=%s", len(index_tokens))
+        await self._subscribe_premium(ws)
         while True:
             await self._apply_option_diff(ws)
             await self.on_message({"type": "ready", "subscriptions": len(self.subscribed_index_tokens) + len(self.subscribed_option_tokens)})
             await self._wake.wait()
             self._wake.clear()
+
+    async def _subscribe_premium(self, ws: Any) -> None:
+        """SENSEX and stocks. Guarded on purpose: if Kotak rejects any of this, the NIFTY feed must carry on untouched."""
+        plan = self.premium
+        if plan is None:
+            return
+        from premium.market import premium_market
+
+        premium_market.subscription_error = plan.error
+        premium_market.subscribed = False
+        if premium_market.circuit_open:
+            return
+        try:
+            if plan.index_tokens:
+                await ws.subscribe_index([_ws_token(value) for value in plan.index_tokens])
+            for start in range(0, len(plan.scrip_tokens), 100):
+                await ws.subscribe_scrips([_ws_token(value) for value in plan.scrip_tokens[start : start + 100]])
+            premium_market.subscribed = True
+            self._premium_subscribed_at = asyncio.get_running_loop().time()
+            logger.info("SFEED_SUBSCRIBED kind=premium index=%s scrips=%s", len(plan.index_tokens), len(plan.scrip_tokens))
+        except Exception as exc:  # noqa: BLE001
+            premium_market.subscription_error = f"premium subscription failed: {type(exc).__name__}"
+            logger.warning("SFEED_PREMIUM_SUBSCRIBE_ERROR kind=%s", type(exc).__name__)
 
     async def _apply_option_diff(self, ws: Any) -> None:
         while self._desired_options != self.subscribed_option_tokens:
@@ -199,6 +242,9 @@ class KotakSFeed:
 
     # ------------------------------------------------------------------ SDK message -> worker tick
     def _to_tick(self, message: Any) -> dict[str, Any] | None:
+        premium = self._premium_tick(message)
+        if premium is not None:
+            return premium
         if isinstance(message, SFeedIndex):
             return self._index_tick(message)
         if isinstance(message, SFeedScrip):
@@ -206,6 +252,41 @@ class KotakSFeed:
                 return self._index_tick(message)  # an index subscribed as a plain scrip
             return self._option_tick(message)
         return None  # market status, lite messages, etc. are not used by the dashboard
+
+    def _premium_tick(self, message: Any) -> dict[str, Any] | None:
+        """A tick for a premium instrument (BSE SENSEX or a subscribed stock), or None for everything else."""
+        plan = self.premium
+        if plan is None or not isinstance(message, (SFeedIndex, SFeedScrip)):
+            return None
+        seg = str(getattr(message, "exchange_segment", ""))
+        token = str(getattr(message, "instrument_token", ""))
+        name = str(_first(message, "name", "trading_symbol") or "")
+        keys = [f"{seg}|{token}", f"{seg}|{name}", f"{seg}|{name}".upper()]
+        is_scrip = f"{seg}|{token}" in plan.symbol_by_key
+        is_sensex = seg == "bse_cm" or "SENSEX" in name.upper()
+        if not is_scrip and not (is_sensex and isinstance(message, SFeedIndex)) and not any(k in plan.symbol_by_key for k in keys):
+            return None
+        ltp = _f(_first(message, "last_traded_price", "ltp"))
+        if ltp is None or ltp <= 0:
+            return None
+        tick: dict[str, Any] = {"kind": "premium", "token": token, "name": name, "keys": keys, "ltp": ltp}
+        for key, names in (("open", ("open_price", "open")), ("high", ("high_price", "high")), ("low", ("low_price", "low")), ("close", ("close_price", "close", "prev_close"))):
+            value = _f(_first(message, *names))
+            if value is not None:
+                tick[key] = value
+        change = _f(_first(message, "net_change", "change"))
+        pct = _f(_first(message, "net_change_percent", "change_percent", "change_pct"))
+        if change is not None:
+            tick["change"] = change
+        if pct is not None:
+            tick["change_pct"] = pct
+        volume = _f(_first(message, "volume_traded_today", "volume"))
+        if volume is not None:
+            tick["volume"] = volume
+        vwap = _f(_first(message, "average_trade_price", "avg_trade_price", "atp"))
+        if vwap:
+            tick["vwap"] = vwap
+        return tick
 
     @staticmethod
     def _index_tick(message: Any) -> dict[str, Any] | None:
