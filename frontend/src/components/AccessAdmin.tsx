@@ -25,6 +25,14 @@ function describe(person: AccessUserRow) {
   return person.role === "trial" ? `Free trial, ends ${ends}` : `Trial ended ${ends}`;
 }
 
+interface PremiumRow {
+  email: string;
+  premium_until: number | null;
+  active: boolean;
+}
+
+const fetchPremium = () => apiGet<PremiumRow[]>("/access/admin/premium");
+
 export const fetchPendingRequests = () => apiGet<PendingRequest[]>("/access/admin/requests");
 const fetchUsers = () => apiGet<AccessUserRow[]>("/access/admin/users");
 
@@ -48,6 +56,9 @@ export default function AccessAdmin({ onClose }: { onClose: () => void }) {
   const [message, setMessage] = useState<string | null>(null);
   const requests = useQuery({ queryKey: ["access-requests"], queryFn: fetchPendingRequests, refetchInterval: 15_000, retry: false });
   const users = useQuery({ queryKey: ["access-users"], queryFn: fetchUsers, retry: false });
+  const premiumList = useQuery({ queryKey: ["access-premium"], queryFn: fetchPremium, retry: false });
+  const [premiumEmail, setPremiumEmail] = useState("");
+  const [premiumDays, setPremiumDays] = useState(30);
 
   const onCloseRef = useRef(onClose);
   useEffect(() => {
@@ -72,6 +83,34 @@ export default function AccessAdmin({ onClose }: { onClose: () => void }) {
         queryClient.invalidateQueries({ queryKey: ["access-requests"] }),
         queryClient.invalidateQueries({ queryKey: ["access-users"] }),
       ]);
+    } catch (error) {
+      setMessage(problem(error));
+    } finally {
+      setWorking(null);
+    }
+  };
+
+  const grantPremium = async () => {
+    setWorking("premium-grant");
+    setMessage(null);
+    try {
+      await apiPost("/access/admin/premium", { email: premiumEmail.trim(), days: premiumDays });
+      setMessage(`Premium is on for ${premiumEmail.trim()} for ${premiumDays} days.`);
+      setPremiumEmail("");
+      await queryClient.invalidateQueries({ queryKey: ["access-premium"] });
+    } catch (error) {
+      setMessage(problem(error));
+    } finally {
+      setWorking(null);
+    }
+  };
+
+  const revokePremium = async (email: string) => {
+    setWorking(`premium-revoke:${email}`);
+    try {
+      await apiPost("/access/admin/premium/revoke", { email });
+      setMessage(`Premium removed for ${email}.`);
+      await queryClient.invalidateQueries({ queryKey: ["access-premium"] });
     } catch (error) {
       setMessage(problem(error));
     } finally {
@@ -124,6 +163,32 @@ export default function AccessAdmin({ onClose }: { onClose: () => void }) {
                 ))}
               </ul>
             )}
+          </section>
+
+          <section aria-labelledby="premium-title" data-testid="premium-admin">
+            <h3 id="premium-title" className="text-sm font-semibold text-white">Premium access</h3>
+            <p className="mt-1 text-xs text-slate-500">Premium (live SENSEX, index charts and stock analysis) is separate from the free trial. Grant it after you receive payment.</p>
+            <div className="mt-3 flex flex-wrap gap-2">
+              <input data-testid="premium-email" type="email" value={premiumEmail} onChange={(event) => setPremiumEmail(event.target.value)} placeholder="email@example.com" aria-label="Email to give Premium" className="h-8 min-w-0 flex-1 rounded-md border border-[#2a364f] bg-[#0e131d] px-2.5 text-xs text-slate-200 placeholder:text-slate-600" />
+              <select data-testid="premium-days" value={premiumDays} onChange={(event) => setPremiumDays(Number(event.target.value))} aria-label="Premium length" className="h-8 rounded-md border border-[#2a364f] bg-[#0e131d] px-2 text-xs text-slate-300">
+                <option value={30}>30 days</option>
+                <option value={90}>90 days</option>
+                <option value={365}>1 year</option>
+              </select>
+              <button type="button" data-testid="premium-grant" disabled={working !== null || premiumEmail.trim().length < 3} onClick={() => void grantPremium()} className="h-8 rounded-md bg-amber-300 px-3 text-xs font-semibold text-[#1a1203] hover:bg-amber-200 disabled:opacity-50">Give Premium</button>
+            </div>
+            <ul className="mt-3 divide-y divide-[#1a2336] rounded-lg border border-[#202b42]">
+              {(premiumList.data ?? []).map((row) => (
+                <li key={row.email} data-testid="premium-row" className="flex items-center justify-between gap-3 px-3 py-2">
+                  <div className="min-w-0">
+                    <p className="truncate text-sm text-slate-200">{row.email}</p>
+                    <p className={`text-[11px] ${row.active ? "text-amber-300/90" : "text-slate-500"}`}>{row.active ? "Premium until" : "Premium ended"} {when(row.premium_until)}</p>
+                  </div>
+                  <button type="button" disabled={working !== null} onClick={() => void revokePremium(row.email)} className="h-7 shrink-0 rounded-md border border-[#26334b] px-2.5 text-[11px] text-slate-300 hover:bg-[#1a2336] disabled:opacity-50">Remove</button>
+                </li>
+              ))}
+              {(premiumList.data ?? []).length === 0 && <li className="px-3 py-2.5 text-xs text-slate-500">{premiumList.isLoading ? "Loading…" : "Nobody has Premium yet."}</li>}
+            </ul>
           </section>
 
           <section aria-labelledby="people-title">

@@ -262,7 +262,16 @@ class MultiIndexFeedWorker:
                         runtime.strike_step = step
                         runtime.contracts = {contract.token: contract for contract in selected}
                         initial_options.extend(f"nse_fo|{contract.token}" for contract in selected)
-                self.feed = KotakSFeed(session, self._on_message)
+                premium_plan = None
+                try:  # premium instruments are optional extras: any failure here must not stop the NIFTY feed
+                    from premium.market import premium_market
+                    from premium.universe import build_plan
+
+                    premium_plan = await build_plan()
+                    premium_market.configure(premium_plan.symbol_by_key, premium_plan.names, premium_plan.kinds)
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("PREMIUM_SETUP_ERROR kind=%s", type(exc).__name__)
+                self.feed = KotakSFeed(session, self._on_message, premium=premium_plan)
                 self.error_message = "Connecting to Kotak SFeed"
                 logger.info("FEED_WORKER_READY event=feed_start option_subscriptions=%s", len(initial_options))
                 await self.feed.run_once(list(INDEX_SUBSCRIPTIONS.values()), initial_options)
