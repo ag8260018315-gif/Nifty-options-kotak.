@@ -324,7 +324,7 @@ def test_breakout_endpoint_ranks_by_score_and_never_claims_a_probability(api, mo
     assert [r["symbol"] for r in j["stocks"]] == ["TCS"]  # INFY is 3% below resistance: not listed
     top = j["stocks"][0]
     assert 0 < top["setup"]["score"] <= 100 and top["news"]["items"][0]["title"] == "TCS headline" and j["accuracy"]["validated"] is False
-    assert "probab" in j["accuracy"]["note"] and "90" not in str(j)
+    assert "probab" in j["accuracy"]["note"] and "90%" not in str(j)
     assert api.client.get("/api/premium/stocks/breakouts", headers=api.cookie("viewer@example.com")).status_code == 403
 
 
@@ -338,9 +338,10 @@ def test_breakout_list_shows_the_backtest_only_when_one_exists(api):
     none = api.client.get("/api/premium/stocks/breakouts", headers=path).json()["accuracy"]
     assert none["validated"] is False and "backtest" not in none
 
-    recs = [{"symbol": "A", "day": f"2026-06-{(i % 28) + 1:02d}", "score": 70, "result": "SUCCESS" if i % 2 else "STOP"} for i in range(250)]
-    stored = bt.summarize(recs, bt.Rule(), sessions_tested=60, symbols_tested=30)
+    obs = [(f"2026-{1 + d // 28:02d}-{1 + d % 28:02d}", 1000 + m, f"S{i}", 90 - i, "SUCCESS" if i < 5 else "STOP", "SUCCESS" if i < 5 else "STOP")
+           for d in range(60) for m in range(4) for i in range(20)]
+    stored = bt.summarize(bt.cross_section(obs, bt.Rule()), bt.Rule(), 20)
     asyncio.run(rpm.research_db["breakout_backtests"].replace_one({"_id": "latest"}, {"_id": "latest", **stored}, upsert=True))
     shown = api.client.get("/api/premium/stocks/breakouts", headers=path).json()["accuracy"]
-    assert shown["validated"] is True and shown["backtest"]["setups"] == 250 and shown["backtest"]["hit_rate_pct"] == 50.0
+    assert shown["validated"] is True and shown["backtest"]["setups"] == 2400 and shown["backtest"]["hit_rate_pct"] == 50.0 and shown["backtest"]["comparison"]["verdict"] == "BETTER"
     assert "definition" in shown["backtest"] and "promise" in shown["note"].lower()

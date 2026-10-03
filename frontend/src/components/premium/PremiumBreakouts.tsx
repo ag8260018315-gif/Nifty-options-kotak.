@@ -80,7 +80,7 @@ export default function PremiumBreakouts() {
                 <div data-testid="breakout-comparison" className="mt-3 rounded-md border border-[#202b42] p-2.5">
                   <p className="font-semibold text-slate-200">Compared with chance</p>
                   <p className={`mt-1 ${color}`}>{c.verdict_text}</p>
-                  <p className="mt-1.5 text-slate-400">Reached the target before the stop: listed stocks <span className="text-slate-200">{c.listed_rate_pct ?? "—"}%</span> of {c.listed_setups}; any stock at a random moment <span className="text-slate-200">{c.random_rate_pct ?? "—"}%</span> of {c.random_moments}; stocks near resistance with any score <span className="text-slate-200">{c.near_resistance_rate_pct ?? "—"}%</span> of {c.near_resistance_moments}.</p>
+                  <p className="mt-1.5 text-slate-400">Top-ranked stocks reached the target before the stop <span className="text-slate-200">{c.listed_rate_pct ?? "—"}%</span> of the time; all stocks at the same moments <span className="text-slate-200">{c.random_rate_pct ?? "—"}%</span>. Difference <span className="text-slate-200">{c.difference_points} points</span> (95% range {c.difference_ci95_points[0]} to {c.difference_ci95_points[1]}) over {c.days} days.</p>
                   <p className="mt-1 text-[10px] text-slate-600">{c.test}</p>
                 </div>
               );

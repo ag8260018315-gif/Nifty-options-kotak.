@@ -175,14 +175,12 @@ export interface BreakoutRow {
 export interface Comparison {
   test: string;
   listed_rate_pct: number | null;
-  listed_ci95_pct: [number, number] | null;
   listed_setups: number;
-  random_moments: number;
   random_rate_pct: number | null;
-  random_ci95_pct: [number, number] | null;
-  near_resistance_moments: number;
-  near_resistance_rate_pct: number | null;
-  near_resistance_ci95_pct: [number, number] | null;
+  random_moments: number;
+  difference_points: number;
+  difference_ci95_points: [number, number];
+  days: number;
   verdict: "BETTER" | "SAME" | "WORSE" | "UNKNOWN";
   verdict_text: string;
 }
