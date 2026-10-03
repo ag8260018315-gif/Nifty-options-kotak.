@@ -54,12 +54,12 @@ export default function PremiumBreakouts() {
       <div className="space-y-2 border-b border-[#202b42] p-4">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div className="flex flex-wrap items-center gap-2">
-            <h2 className="font-heading text-base text-slate-100">Top 10 breakout watchlist</h2>
+            <h2 className="font-heading text-base text-slate-100">Stocks near resistance (watchlist)</h2>
             {data && <MarketBadge market={data.market} />}
           </div>
           <span data-testid="breakout-not-probability" className="rounded-full border border-amber-400/30 bg-amber-400/10 px-2.5 py-1 text-[10px] font-semibold text-amber-200">Score out of 100 · not a probability</span>
         </div>
-        <p className="text-[11px] leading-relaxed text-slate-400">{data?.method ?? "Stocks just below resistance with rising volume, ranked by a transparent score."}</p>
+        <p className="text-[11px] leading-relaxed text-slate-400">{data?.method ?? "Stocks just below a resistance level, ranked by a transparent score."} Being on this list does not mean a stock will break out.</p>
         {data?.accuracy.backtest ? (
           <div data-testid="breakout-accuracy" className="rounded-lg border border-[#202b42] bg-[#090d15] p-3 text-[11px] leading-relaxed text-slate-400">
             <p>
@@ -69,6 +69,9 @@ export default function PremiumBreakouts() {
               {data.accuracy.backtest.period ? ` (${data.accuracy.backtest.period[0]} to ${data.accuracy.backtest.period[1]})` : ""}.
               {!data.accuracy.validated && <span className="text-amber-300"> Not enough history yet to rely on this.</span>}
             </p>
+            {data.accuracy.backtest.hit_rate_pct !== null && (
+              <p data-testid="breakout-plain-result" className="mt-2 text-slate-300">In past tests, about <span className="font-semibold text-amber-300">{Math.round(data.accuracy.backtest.hit_rate_pct)} of every 100</span> stocks that were listed met the success rule below. Treat this list as a watchlist, not a prediction.</p>
+            )}
             <p className="mt-1 text-slate-500">{data.accuracy.backtest.definition}</p>
             <p className="mt-2 flex flex-wrap gap-x-4 gap-y-1">
               {data.accuracy.backtest.by_score_band.filter((b) => b.setups > 0).map((b) => <span key={b.band}>score {b.band}: <span className="text-slate-200">{b.hit_rate_pct}%</span> of {b.setups}</span>)}
@@ -81,7 +84,7 @@ export default function PremiumBreakouts() {
       </div>
       {query.isError && <p className="p-4 text-xs text-slate-500">The watchlist is unavailable right now.</p>}
       {data && data.stocks.length === 0 && (
-        <p data-testid="breakout-empty" className="p-4 text-xs leading-relaxed text-slate-500">No stock is sitting within 2% below its resistance with enough candles right now. Candles build from live prices during market hours (about 35 minutes after the open), so this list is empty when the market is closed.</p>
+        <p data-testid="breakout-empty" className="p-4 text-xs leading-relaxed text-slate-500">No stock is within 2% below a resistance level with enough candles right now. Candles build from live prices during market hours (about 35 minutes after the open), so this list is empty when the market is closed.</p>
       )}
       <ol className="divide-y divide-[#161e30]">
         {(data?.stocks ?? []).map((row, index) => (
