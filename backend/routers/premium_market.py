@@ -174,7 +174,8 @@ async def _accuracy() -> dict[str, Any]:
 
 @router.get("/stocks/breakouts")
 async def breakouts(limit: int = Query(default=10, ge=1, le=20)) -> dict[str, Any]:
-    """Watchlist of stocks sitting just below resistance, ranked by a transparent SCORE (never a probability), with news."""
+    """Watchlist of stocks sitting just below a resistance level, ranked by a transparent SCORE (never a probability), with news.
+    Being listed does not mean the stock will break out; the historical test result is returned alongside."""
     await premium_market.ensure_quotes()
     ranked = []
     for symbol in premium_market.symbols("stock"):
@@ -190,9 +191,9 @@ async def breakouts(limit: int = Query(default=10, ge=1, le=20)) -> dict[str, An
     for row, item in zip(top, found):
         row["news"] = item if isinstance(item, dict) else {"status": "unavailable", "provider": news.PROVIDER, "items": []}
     return {
-        "label": LABEL, "title": "Breakout watchlist", "count": len(ranked), "stocks": top,
+        "label": LABEL, "title": "Stocks near resistance (watchlist)", "count": len(ranked), "stocks": top,
         "market": market_state(datetime.now(timezone.utc), premium_market.last_tick() or None) if _live() else _market_for("NIFTY"),
-        "method": "Stocks within 2% below their nearest resistance, ranked by a 0-100 score from proximity, volume expansion, trend, momentum and VWAP.",
+        "method": "Stocks within 2% below their nearest resistance level, ranked by a 0-100 score from closeness, volume, trend, momentum and VWAP.",
         "accuracy": await _accuracy(),
         "news_note": "Headlines come from Google News and are shown as published. They are not verified by this app and may be unrelated or delayed.",
     }
