@@ -29,7 +29,7 @@ export default function AnalysisView({ detail, interval, onInterval }: { detail:
             ))}
           </div>
           <span className="hidden h-4 w-px bg-[#202b42] sm:block" />
-          <Toggle on={options.ema} label="EMA 9/21" testId="toggle-ema" onClick={() => flip("ema")} />
+          <Toggle on={options.ema} label={`EMA ${analysis.ema_periods?.[0] ?? 9}/${analysis.ema_periods?.[1] ?? 20}`} testId="toggle-ema" onClick={() => flip("ema")} />
           <Toggle on={options.bb} label="Bollinger" testId="toggle-bb" onClick={() => flip("bb")} />
           {hasVolume && <Toggle on={options.vwap} label="VWAP" testId="toggle-vwap" onClick={() => flip("vwap")} />}
           <Toggle on={options.levels} label="Support / resistance" testId="toggle-levels" onClick={() => flip("levels")} />

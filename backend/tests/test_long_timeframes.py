@@ -66,7 +66,7 @@ def test_daily_and_weekly_frames_include_a_forming_candle_for_today():
     assert [b["time"] for b in weekly] == [ist(2026, 6, 1), ist(2026, 6, 8)]
     assert weekly[0]["open"] == 101 and weekly[0]["close"] == 110 and weekly[0]["high"] == 115 and weekly[0]["low"] == 91
     with pytest.raises(ValueError):
-        tf.build_long_bars(30, [], [], [])
+        tf.build_long_bars(7, [], [], [])
 
 
 def test_daily_frame_can_be_derived_from_fine_history_when_no_daily_is_stored():
@@ -103,7 +103,7 @@ def test_tail_keeps_recent_candles_but_indicators_use_the_whole_history():
     full = analyse(bars, tf.DAY, None, now, False)
     cut = analyse(bars, tf.DAY, None, now, False, tail=50)
     assert len(cut["candles"]) == 50 and all(len(v) == 50 for v in cut["series"].values())
-    assert cut["series"]["ema21"] == full["series"]["ema21"][-50:] and cut["signal"] == full["signal"]
+    assert cut["series"]["ema_slow"] == full["series"]["ema_slow"][-50:] and cut["signal"] == full["signal"]
     short = analyse(bars[:20], tf.DAY, None, now, False)
     assert short["signal"]["action"] == "BUILDING" and "history import" in short["signal"]["reasons"][0] and "daily" in short["signal"]["reasons"][0]
 
@@ -132,7 +132,7 @@ def test_api_serves_every_frame_for_premium_and_blocks_free_users(api):
         j = api.client.get(f"/api/premium/index/NIFTY?interval={minutes}", headers=owner).json()
         a = j["analysis"]
         assert a["interval"] == minutes and a["history_available"] is True and 0 < len(a["candles"]) <= 300, minutes
-        assert len(a["series"]["ema9"]) == len(a["candles"])
+        assert len(a["series"]["ema_fast"]) == len(a["candles"])
     daily = api.client.get("/api/premium/index/NIFTY?interval=1440", headers=owner).json()["analysis"]
     assert daily["signal"]["action"] in {"BUY", "SELL", "NEUTRAL"} and daily["trend"]["label"] == "UPTREND"
     weekly = api.client.get("/api/premium/index/NIFTY?interval=10080", headers=owner).json()["analysis"]
@@ -182,3 +182,27 @@ def test_days_after_the_import_are_filled_from_recorded_candles(api):
     for d in days[1:]:
         assert int(datetime(d.year, d.month, d.day, tzinfo=IST).timestamp()) in times, d
     assert a["candles"][-1]["close"] in (23005, 23006)  # the recorded sessions are the latest candles
+
+
+def test_thirty_minute_and_monthly_frames():
+    fine = [bar(ist(2026, 6, 2, 9, 15) + 60 * k, 100 + k, 101 + k, 99 + k, 100.5 + k, 3) for k in range(60)]
+    thirty = tf.build_long_bars(30, fine, [], [])
+    assert [b["time"] for b in thirty] == [ist(2026, 6, 2, 9, 15), ist(2026, 6, 2, 9, 45)] and thirty[0]["volume"] == 90
+    days = [bar(ist(2026, 5, d), 100, 110 + d, 90, 100 + d, 0) for d in (5, 6, 7)] + [bar(ist(2026, 6, d), 200, 210, 190, 205, 0) for d in (1, 2)]
+    months = tf.build_long_bars(tf.MONTH, [], days, [])
+    assert [b["time"] for b in months] == [ist(2026, 5, 1), ist(2026, 6, 1)]
+    assert months[0]["end"] == ist(2026, 6, 1) and months[1]["end"] == ist(2026, 7, 1)
+    assert tf.next_month_start(ist(2026, 12, 15)) == ist(2027, 1, 1) and months[0]["high"] == 117
+    # a monthly candle is not 'closed' until its month is over, even though 30 days have passed
+    bars = [dict(b, **({"end": tf.next_month_start(b["time"])})) for b in [bar(ist(2026, 10, 1))]]
+    assert analyse(bars, tf.MONTH, None, ist(2026, 10, 31, 10), False)["bars_closed"] == 0
+    assert analyse(bars, tf.MONTH, None, ist(2026, 11, 1, 1), False)["bars_closed"] == 1
+
+
+def test_custom_ema_periods_are_used_and_reported():
+    bars = [bar(ist(2026, 1, 1) + 86400 * i, 100 + i * 0.3, 101 + i * 0.3, 99 + i * 0.3, 100 + i * 0.3, 0) for i in range(80)]
+    now = bars[-1]["time"] + 86400 * 2
+    default = analyse(bars, tf.DAY, None, now, False)
+    custom = analyse(bars, tf.DAY, None, now, False, ema_fast=5, ema_slow=50)
+    assert default["ema_periods"] == [9, 20] and custom["ema_periods"] == [5, 50]
+    assert default["series"]["ema_slow"] != custom["series"]["ema_slow"] and "EMA9" in default["trend"]["basis"][0] and "EMA50" in custom["trend"]["basis"][0]

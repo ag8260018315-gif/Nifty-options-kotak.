@@ -112,13 +112,13 @@ def volume_analysis(closed: list[dict[str, Any]], has_volume: bool) -> dict[str,
     }
 
 
-def trend_label(closes: list[float], ema_fast: list[float], ema_slow: list[float]) -> dict[str, Any]:
+def trend_label(closes: list[float], ema_fast: list[float], ema_slow: list[float], fast_n: int = 9, slow_n: int = 20) -> dict[str, Any]:
     if len(closes) < 10:
         return {"label": "BUILDING", "basis": []}
     up = ema_fast[-1] > ema_slow[-1] and closes[-1] > ema_slow[-1] and ema_slow[-1] > ema_slow[-6]
     down = ema_fast[-1] < ema_slow[-1] and closes[-1] < ema_slow[-1] and ema_slow[-1] < ema_slow[-6]
     label = "UPTREND" if up else "DOWNTREND" if down else "SIDEWAYS"
-    return {"label": label, "basis": [f"EMA9 {'above' if ema_fast[-1] > ema_slow[-1] else 'below'} EMA21", f"price {'above' if closes[-1] > ema_slow[-1] else 'below'} EMA21"]}
+    return {"label": label, "basis": [f"EMA{fast_n} {'above' if ema_fast[-1] > ema_slow[-1] else 'below'} EMA{slow_n}", f"price {'above' if closes[-1] > ema_slow[-1] else 'below'} EMA{slow_n}"]}
 
 
 def _near(price: float, level: float | None, pct: float = 0.25) -> bool:
@@ -126,12 +126,12 @@ def _near(price: float, level: float | None, pct: float = 0.25) -> bool:
 
 
 def score_signal(last: float, rsi_now: float | None, macd_hist: list[float], ema_fast: float, ema_slow: float, vwap: float | None,
-                 vol: dict[str, Any], levels: dict[str, Any], last_bar_up: bool) -> tuple[int, list[str]]:
+                 vol: dict[str, Any], levels: dict[str, Any], last_bar_up: bool, fast_n: int = 9, slow_n: int = 20) -> tuple[int, list[str]]:
     score, why = 0, []
     if ema_fast > ema_slow and last > ema_slow:
-        score += 30; why.append("Trend: EMA9 above EMA21 and price above EMA21 (+30)")
+        score += 30; why.append(f"Trend: EMA{fast_n} above EMA{slow_n} and price above EMA{slow_n} (+30)")
     elif ema_fast < ema_slow and last < ema_slow:
-        score -= 30; why.append("Trend: EMA9 below EMA21 and price below EMA21 (-30)")
+        score -= 30; why.append(f"Trend: EMA{fast_n} below EMA{slow_n} and price below EMA{slow_n} (-30)")
     if rsi_now is not None:
         if 55 <= rsi_now < 70:
             score += 20; why.append(f"Momentum: RSI {rsi_now:.0f} is bullish (+20)")
@@ -160,7 +160,7 @@ def score_signal(last: float, rsi_now: float | None, macd_hist: list[float], ema
 
 
 def _frame(minutes: int) -> str:
-    return {60: "1-hour", 240: "4-hour", 1440: "daily", 10080: "weekly"}.get(minutes, f"{minutes}-minute")
+    return {30: "30-minute", 60: "1-hour", 240: "4-hour", 1440: "daily", 10080: "weekly", 43200: "monthly"}.get(minutes, f"{minutes}-minute")
 
 
 def _tail(out: dict[str, Any], tail: int | None) -> dict[str, Any]:
@@ -173,15 +173,15 @@ def _tail(out: dict[str, Any], tail: int | None) -> dict[str, Any]:
 
 
 def analyse(bars: list[dict[str, Any]], interval: int, prev_day: dict[str, float] | None, now_epoch: float, has_volume: bool,
-            day_high: float | None = None, day_low: float | None = None, include_series: bool = True, tail: int | None = None) -> dict[str, Any]:
+            day_high: float | None = None, day_low: float | None = None, include_series: bool = True, tail: int | None = None, ema_fast: int = 9, ema_slow: int = 20) -> dict[str, Any]:
     """`bars` already resampled to `interval` minutes (oldest first), the last one possibly still forming."""
     width = interval * 60
-    closed = [b for b in bars if b["time"] + width <= now_epoch]
-    out: dict[str, Any] = {"interval": interval, "bars_total": len(bars), "bars_closed": len(closed), "bars_required": MIN_BARS, "disclaimer": DISCLAIMER}
+    closed = [b for b in bars if b.get("end", b["time"] + width) <= now_epoch]
+    out: dict[str, Any] = {"ema_periods": [ema_fast, ema_slow], "interval": interval, "bars_total": len(bars), "bars_closed": len(closed), "bars_required": MIN_BARS, "disclaimer": DISCLAIMER}
     closes = [b["close"] for b in bars]
     if bars and include_series:
         h, l, c = [b["high"] for b in bars], [b["low"] for b in bars], closes
-        e9, e21 = ema(c, 9), ema(c, 21)
+        e9, e21 = ema(c, ema_fast), ema(c, ema_slow)
         r14 = rsi(c, 14)
         m_line, m_sig, m_hist = macd(c)
         bb_mid, bb_up, bb_lo = bollinger(c)
@@ -195,7 +195,7 @@ def analyse(bars: list[dict[str, Any]], interval: int, prev_day: dict[str, float
                 vol_sum += v
                 vw[i] = pv / vol_sum if vol_sum else None
         out["series"] = {
-            "time": [b["time"] for b in bars], "ema9": [_r(x) for x in e9], "ema21": [_r(x) for x in e21], "rsi": [_r(x) for x in r14],
+            "time": [b["time"] for b in bars], "ema_fast": [_r(x) for x in e9], "ema_slow": [_r(x) for x in e21], "rsi": [_r(x) for x in r14],
             "macd": [_r(x, 3) for x in m_line], "macd_signal": [_r(x, 3) for x in m_sig], "macd_hist": [_r(x, 3) for x in m_hist],
             "bb_upper": [_r(x) for x in bb_up], "bb_mid": [_r(x) for x in bb_mid], "bb_lower": [_r(x) for x in bb_lo], "vwap": [_r(x) for x in vw],
         }
@@ -204,10 +204,10 @@ def analyse(bars: list[dict[str, Any]], interval: int, prev_day: dict[str, float
     if len(closed) < MIN_BARS:
         out.update(levels=support_resistance(closed, closed[-1]["close"] if closed else 0, prev_day, day_high, day_low) if closed else None,
                    volume=volume_analysis(closed, has_volume) if closed else {"available": False}, trend={"label": "BUILDING", "basis": []},
-                   signal={"action": "BUILDING", "score": 0, "reasons": [f"Needs {MIN_BARS} closed {_frame(interval)} candles; has {len(closed)}. " + ("Long timeframes need stored history: run the history import." if interval >= 60 else "Candles come from live ticks since the server started.")]})
+                   signal={"action": "BUILDING", "score": 0, "reasons": [f"Needs {MIN_BARS} closed {_frame(interval)} candles; has {len(closed)}. " + ("Long timeframes need stored history: run the history import." if interval >= 30 else "Candles come from live ticks since the server started.")]})
         return _tail(out, tail)
     cc = [b["close"] for b in closed]
-    f, s = ema(cc, 9), ema(cc, 21)
+    f, s = ema(cc, ema_fast), ema(cc, ema_slow)
     r = rsi(cc, 14)[-1]
     _, _, hist = macd(cc)
     last = cc[-1]
@@ -217,11 +217,11 @@ def analyse(bars: list[dict[str, Any]], interval: int, prev_day: dict[str, float
         vwap_closed = sum((b["high"] + b["low"] + b["close"]) / 3 * (b.get("volume") or 0) for b in closed) / tot if tot else None
     vol = volume_analysis(closed, has_volume)
     levels = support_resistance(closed, last, prev_day, day_high, day_low)
-    score, why = score_signal(last, r, hist, f[-1], s[-1], vwap_closed, vol, levels, closed[-1]["close"] >= closed[-1]["open"])
+    score, why = score_signal(last, r, hist, f[-1], s[-1], vwap_closed, vol, levels, closed[-1]["close"] >= closed[-1]["open"], ema_fast, ema_slow)
     action = "BUY" if score >= BUY_AT else "SELL" if score <= SELL_AT else "NEUTRAL"
     strength = None if action == "NEUTRAL" else ("STRONG" if abs(score) >= 70 else "MODERATE" if abs(score) >= 50 else "WEAK")
     out["vwap"] = _r(vwap_closed)
-    out.update(levels=levels, volume=vol, trend=trend_label(cc, f, s),
+    out.update(levels=levels, volume=vol, trend=trend_label(cc, f, s, ema_fast, ema_slow),
                signal={"action": action, "score": score, "strength": strength, "reasons": why, "rsi": _r(r, 1), "price": _r(last), "as_of_candle": closed[-1]["time"],
                        "nearest_support": levels["nearest_support"], "nearest_resistance": levels["nearest_resistance"]})
     return _tail(out, tail)

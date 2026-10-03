@@ -10,8 +10,8 @@ from zoneinfo import ZoneInfo
 IST = ZoneInfo("Asia/Kolkata")
 IST_OFFSET = 19800
 OPEN_SECONDS = 9 * 3600 + 15 * 60
-DAY, WEEK = 1440, 10080
-LONG_FRAMES = (60, 240, DAY, WEEK)
+DAY, WEEK, MONTH = 1440, 10080, 43200
+LONG_FRAMES = (30, 60, 240, DAY, WEEK, MONTH)
 
 
 def _merge(into: dict[str, Any], bar: dict[str, Any]) -> None:
@@ -42,6 +42,16 @@ def week_start(epoch: int) -> int:
     return midnight - weekday * 86400
 
 
+def month_start(epoch: int) -> int:
+    d = datetime.fromtimestamp(day_start(epoch) + 3600, IST)
+    return int(datetime(d.year, d.month, 1, tzinfo=IST).timestamp())
+
+
+def next_month_start(epoch: int) -> int:
+    d = datetime.fromtimestamp(month_start(epoch) + 3600, IST)
+    return int(datetime(d.year + (d.month == 12), d.month % 12 + 1, 1, tzinfo=IST).timestamp())
+
+
 def regroup(bars: list[dict[str, Any]], start_of) -> list[dict[str, Any]]:
     """Combine bars (sorted by time) into buckets whose start is `start_of(time)`. The result's time is the bucket start."""
     out: list[dict[str, Any]] = []
@@ -62,6 +72,14 @@ def to_weekly(daily: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return regroup(daily, week_start)
 
 
+def to_monthly(daily: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Monthly candles. Each carries `end` (the next month's start) so a candle counts as closed only once its month is over."""
+    months = regroup(daily, month_start)
+    for m in months:
+        m["end"] = next_month_start(m["time"])
+    return months
+
+
 def merge_by_time(base: list[dict[str, Any]], newer: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Union of two bar lists; where the same candle time exists in both, `newer` wins."""
     by_time = {b["time"]: b for b in base}
@@ -74,13 +92,13 @@ def build_long_bars(minutes: int, fine: list[dict[str, Any]], daily: list[dict[s
     fine   = intraday history (any size that divides the target: 30-minute or 1-minute bars), oldest first
     daily  = daily history (time = IST midnight)
     today  = today's live 1-minute candles (so the newest candle is current, and is drawn as still forming)"""
-    if minutes in (60, 240):
+    if minutes in (30, 60, 240):
         start_today = day_start(today[0]["time"]) if today else None
         history = [b for b in fine if start_today is None or b["time"] < start_today]
         return regroup(history + list(today), lambda t: session_bucket(t, minutes))
-    if minutes not in (DAY, WEEK):
+    if minutes not in (DAY, WEEK, MONTH):
         raise ValueError("unsupported long timeframe")
     days = merge_by_time(daily, to_daily(today)) if today else list(daily)
     if not days and fine:
         days = to_daily(fine)
-    return days if minutes == DAY else to_weekly(days)
+    return days if minutes == DAY else to_weekly(days) if minutes == WEEK else to_monthly(days)
