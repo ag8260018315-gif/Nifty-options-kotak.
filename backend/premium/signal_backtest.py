@@ -110,7 +110,7 @@ def summarize_trades(trades: list[dict[str, Any]]) -> dict[str, Any]:
         "avg_r": round(sum(t["net_r"] for t in ordered) / n, 3), "total_r": round(equity, 2), "profit_factor": round(gains / losses, 2) if losses > 0 else None,
         "max_drawdown_r": round(drawdown, 2), "longest_losing_streak": worst_streak, "targets": sum(t["result"] == "TARGET" for t in ordered),
         "stops": sum(t["result"] == "STOP" for t in ordered), "timeouts": sum(t["result"] == "TIMEOUT" for t in ordered), "by_direction": by_dir,
-        "period": [ordered[0]["day"], ordered[-1]["day"]], "reliable": n >= MIN_TRADES_TO_RELY,
+        "period": [min(t["day"] for t in ordered), max(t["day"] for t in ordered)], "reliable": n >= MIN_TRADES_TO_RELY,
         "note": ("Past results on past data; not a promise." if n >= MIN_TRADES_TO_RELY else f"Only {n} trades: too few to rely on (needs {MIN_TRADES_TO_RELY}+)."),
     }
 

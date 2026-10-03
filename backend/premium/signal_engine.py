@@ -58,7 +58,7 @@ def stock_signal(analysis: dict[str, Any], market: dict[str, Any] | None, interv
     data = data_status(market)
     base: dict[str, Any] = {"generated_at": now.isoformat(), "data": data, "interval": interval, "disclaimer": DISCLAIMER, "bias": "Unavailable", "action": "NONE",
                             "score": 0, "confidence": {"value": 0, "meaning": "Signal strength, not a probability of winning."}, "reasons": [], "patterns": [],
-                            "setup": None, "invalidation": [], "trend_strength": None, "momentum": None, "volatility": None, "as_of_candle": None}
+                            "setup": None, "invalidation": [], "trend_strength": None, "momentum": None, "volatility": None, "as_of_candle": None, "markers": []}
     sig = analysis.get("signal") or {}
     if data["status"] in ("DELAYED", "UNAVAILABLE"):
         base["reasons"] = [data["message"]]
@@ -77,9 +77,13 @@ def stock_signal(analysis: dict[str, Any], market: dict[str, Any] | None, interv
     score = max(-100, min(100, int(sig.get("score", 0)) + adj))
     bias = "Bullish" if score >= BUY_AT else "Bearish" if score <= SELL_AT else "Neutral"
     reasons = list(sig.get("reasons") or [])
-    for p in recent:
+    seen: dict[tuple[str, str], int] = {}
+    for p in recent:  # one line per distinct pattern, with how many of the recent candles showed it
         if p["direction"] in (BULL, BEAR):
-            reasons.append(f"Pattern: {p['name']} ({p['direction']}) on a recent candle ({'+' if p['direction'] == BULL else '-'}{PATTERN_WEIGHT})")
+            seen[(p["name"], p["direction"])] = seen.get((p["name"], p["direction"]), 0) + 1
+    for (name, direction), times in seen.items():
+        where = "a recent candle" if times == 1 else f"{times} of the last {PATTERN_WINDOW} candles"
+        reasons.append(f"Pattern: {name} ({direction}) on {where} ({'+' if direction == BULL else '-'}{PATTERN_WEIGHT} each, at most {PATTERN_CAP} in total)")
     series = analysis.get("series") or {}
     atr = analysis.get("atr")
     price = sig.get("price")
@@ -107,7 +111,7 @@ def stock_signal(analysis: dict[str, Any], market: dict[str, Any] | None, interv
         inval.append(f"A close above resistance {levels.get('nearest_resistance')} or below support {levels.get('nearest_support')} with rising volume would change the picture.")
     base.update(bias=bias, action={"Bullish": "BUY", "Bearish": "SELL"}.get(bias, "NONE"), score=score,
                 confidence={"value": min(100, abs(score)), "meaning": "Signal strength, not a probability of winning. See the tested win rate separately."},
-                reasons=reasons, patterns=recent, setup=setup, invalidation=inval, trend_strength=trend_strength,
+                reasons=reasons, patterns=recent, markers=patterns, setup=setup, invalidation=inval, trend_strength=trend_strength,
                 momentum={"value": mom_value, "label": mom_label}, volatility={"atr_pct": atr_pct, "label": _volatility(atr_pct, interval)},
                 as_of_candle=sig.get("as_of_candle"))
     return base

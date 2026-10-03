@@ -40,3 +40,87 @@ def test_free_users_cannot_reach_any_of_it(api):
     for path in ("/api/premium/stocks-meta", "/api/premium/stock/TCS?ema_fast=5&ema_slow=40", "/api/premium/stock/TCS?interval=43200"):
         r = api.client.get(path, headers=free)
         assert r.status_code == 403 and "engine" not in r.text and "sector" not in r.text
+
+
+def test_stock_news_is_premium_only_validates_the_symbol_and_survives_provider_failure(api, monkeypatch):
+    from premium import news
+
+    async def fake(symbol, limit=4, client=None):
+        return {"status": "ok", "provider": news.PROVIDER, "items": [{"title": f"{symbol} results", "link": "https://example.com/a", "source": "Example", "published_at": None}]}
+
+    async def boom(symbol, limit=4, client=None):
+        raise RuntimeError("provider down")
+
+    monkeypatch.setattr(news, "headlines", fake)
+    ok = api.client.get("/api/premium/stock/TCS/news", headers=owner(api)).json()
+    assert ok["symbol"] == "TCS" and ok["news"]["items"][0]["title"] == "TCS results" and "not verified" in ok["note"]
+    assert api.client.get("/api/premium/stock/NOPE/news", headers=owner(api)).status_code == 404
+    assert api.client.get("/api/premium/stock/TCS/news", headers=api.cookie("viewer@example.com")).status_code == 403
+    monkeypatch.setattr(news, "headlines", boom)
+    down = api.client.get("/api/premium/stock/TCS/news", headers=owner(api))
+    assert down.status_code == 200 and down.json()["news"]["status"] == "unavailable" and down.json()["news"]["items"] == []
+
+
+# ------------------------------------------------------------------ the last recorded session while the market is closed
+def _seed_session(api, symbol, day, base=100.0, n=60):
+    import asyncio
+    from datetime import datetime
+
+    from premium.market import IST
+
+    t0 = int(datetime(day.year, day.month, day.day, 9, 15, tzinfo=IST).timestamp())
+    docs = [{"_id": f"{symbol}:{t0 + i * 60}", "symbol": symbol, "trading_day": day.isoformat(), "time": t0 + i * 60, "open": base + i * 0.1, "high": base + i * 0.1 + 0.2,
+             "low": base + i * 0.1 - 0.1, "close": base + i * 0.1 + 0.1, "volume": 1000 + i, "ticks": 3} for i in range(n)]
+    asyncio.run(api.db.premium_candles.insert_many(docs))
+
+
+def _market(monkeypatch, open_):
+    import premium.market as pm
+    import routers.premium_market as rpm
+
+    monkeypatch.setattr(rpm, "market_hours", lambda now: open_)
+    monkeypatch.setattr(pm, "market_hours", lambda now: open_)
+    monkeypatch.setattr(rpm, "_live", lambda: True)
+
+
+def test_closed_market_with_no_candles_today_shows_the_last_recorded_session_clearly_labelled(api, monkeypatch):
+    from datetime import date
+
+    _seed_session(api, "TCS", date(2026, 5, 1))
+    _seed_session(api, "TCS", date(2026, 5, 4), base=102.0)
+    _market(monkeypatch, open_=False)
+    j = api.client.get("/api/premium/stock/TCS?interval=1", headers=owner(api)).json()
+    a = j["analysis"]
+    assert a["session_day"] == "2026-05-04" and len(a["candles"]) == 60 and a["candles"][0]["open"] == 102.0
+    assert a["levels"]["pivots"] is not None  # pivots come from the session BEFORE the one shown (2026-05-01)
+    assert j["engine"]["data"]["status"] == "HISTORICAL" and j["engine"]["bias"] != "Unavailable"
+    five = api.client.get("/api/premium/stock/TCS?interval=5", headers=owner(api)).json()["analysis"]
+    assert five["session_day"] == "2026-05-04" and len(five["candles"]) == 12
+
+
+def test_the_stock_list_uses_the_last_session_for_its_quick_signal_when_closed(api, monkeypatch):
+    from datetime import date, datetime, timezone
+
+    from premium.market import premium_market
+
+    _seed_session(api, "TCS", date(2026, 5, 4))
+    _market(monkeypatch, open_=False)
+    now = datetime.now(timezone.utc)
+    premium_market.quotes["TCS"] = {"symbol": "TCS", "name": "Tata Consultancy Services", "kind": "stock", "ltp": 106.1, "change": 1.0, "change_pct": 1.0, "updated_at": now.isoformat(), "_ts": now}
+    row = next(r for r in api.client.get("/api/premium/stocks", headers=owner(api)).json()["stocks"] if r["symbol"] == "TCS")
+    assert row["signal"]["action"] != "BUILDING" and row["signal"]["bars_closed"] >= 35
+
+
+def test_during_market_hours_an_empty_day_is_never_filled_with_yesterdays_candles(api, monkeypatch):
+    from datetime import date
+
+    _seed_session(api, "TCS", date(2026, 5, 4))
+    _market(monkeypatch, open_=True)
+    a = api.client.get("/api/premium/stock/TCS?interval=1", headers=owner(api)).json()["analysis"]
+    assert a["session_day"] is None and a["candles"] == []  # live means today's ticks; yesterday must not pass for them
+
+
+def test_no_recorded_session_at_all_stays_empty_without_error(api, monkeypatch):
+    _market(monkeypatch, open_=False)
+    a = api.client.get("/api/premium/stock/INFY?interval=1", headers=owner(api)).json()["analysis"]
+    assert a["session_day"] is None and a["candles"] == []

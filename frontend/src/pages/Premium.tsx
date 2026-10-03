@@ -1,10 +1,12 @@
 import { useState } from "react";
 import { useMutation } from "@tanstack/react-query";
-import { Link } from "react-router-dom";
+import { Link, useLocation, useParams } from "react-router-dom";
 import { Activity, Database, Gauge, Lock, ShieldCheck, Target } from "lucide-react";
 
 import PremiumIndices from "@/components/premium/PremiumIndices";
 import PremiumStocks from "@/components/premium/PremiumStocks";
+import StockCompare from "@/components/premium/StockCompare";
+import StockPage from "@/components/premium/StockPage";
 import { apiPost } from "@/lib/api";
 
 export interface PremiumUser {
@@ -13,12 +15,13 @@ export interface PremiumUser {
   premium_until?: number | null;
 }
 
-type Tab = "indices" | "stocks";
+// The address decides the view, so every stock and comparison has a link that can be bookmarked or shared.
+type View = "indices" | "stocks" | "stock" | "compare";
 
 const FEATURES = [
-  { icon: Gauge, title: "Advanced live charts", text: "SENSEX, NIFTY 50, BANK NIFTY and FIN NIFTY with interactive candlesticks, EMA, Bollinger bands, VWAP, RSI and MACD." },
-  { icon: Database, title: "Live Indian stocks", text: "Large-cap NSE stocks with continuously updating prices, change, volume and a trend and signal for each." },
-  { icon: Target, title: "Signals and setups", text: "Transparent buy/sell scoring, support and resistance, volume spikes, and a ranked list of potential buying setups." },
+  { icon: Gauge, title: "Advanced live charts", text: "SENSEX, NIFTY 50, BANK NIFTY, FIN NIFTY and every stock, from 1-minute to monthly candles, with 9/20 EMA (or your own periods), Bollinger bands, VWAP, RSI, MACD, volume, support/resistance and candlestick patterns." },
+  { icon: Database, title: "129 stocks, a page each", text: "Search, filter by sector, sort, keep watchlists, compare up to four stocks side by side, and open any stock for its live price, status and news." },
+  { icon: Target, title: "Signal engine with tested history", text: "Bullish, bearish or neutral with reasons, a buy/sell zone, entry, stop and targets, what would invalidate it, and how the same rule did on past data. Never a promise." },
   { icon: ShieldCheck, title: "Real Kotak data only", text: "Every number comes from the live Kotak Neo feed. Nothing is simulated, and the page says plainly when the market is closed or data is delayed." },
 ];
 
@@ -56,7 +59,10 @@ function Locked({ email }: { email: string | null }) {
 }
 
 export default function Premium({ user }: { user: PremiumUser }) {
-  const [tab, setTab] = useState<Tab>("indices");
+  const { symbol } = useParams<{ symbol: string }>();
+  const { pathname } = useLocation();
+  const view: View = symbol ? "stock" : pathname.startsWith("/premium/compare") ? "compare" : pathname.startsWith("/premium/stocks") ? "stocks" : "indices";
+  const activeTab = view === "indices" ? "indices" : "stocks";
   const until = user.premium_until ? new Date(user.premium_until * 1000).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric", timeZone: "Asia/Kolkata" }) : null;
   return (
     <div data-testid="premium-shell" className="min-h-svh bg-[#07090e] text-slate-100">
@@ -71,8 +77,8 @@ export default function Premium({ user }: { user: PremiumUser }) {
           </div>
           {user.premium && (
             <nav aria-label="Premium sections" className="flex items-center gap-1 rounded-lg border border-[#202b42] bg-[#0e131d] p-1">
-              {([["indices", "Indices & charts"], ["stocks", "Stocks"]] as const).map(([id, label]) => (
-                <button key={id} type="button" data-testid={`premium-tab-${id}`} aria-pressed={tab === id} onClick={() => setTab(id)} className={`rounded-md px-3.5 py-2 text-xs font-semibold ${tab === id ? "bg-amber-300 text-[#1a1203]" : "text-slate-400 hover:text-slate-200"}`}>{label}</button>
+              {([["indices", "Indices & charts", "/premium"], ["stocks", "Stocks", "/premium/stocks"]] as const).map(([id, label, to]) => (
+                <Link key={id} to={to} data-testid={`premium-tab-${id}`} aria-current={activeTab === id ? "page" : undefined} className={`rounded-md px-3.5 py-2 text-xs font-semibold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-200/60 ${activeTab === id ? "bg-amber-300 text-[#1a1203]" : "text-slate-400 hover:text-slate-200"}`}>{label}</Link>
               ))}
             </nav>
           )}
@@ -83,8 +89,8 @@ export default function Premium({ user }: { user: PremiumUser }) {
         </div>
       </header>
       <main className="mx-auto max-w-[1600px] px-4 py-5 pb-24 sm:px-6">
-        {user.premium ? tab === "indices" ? <PremiumIndices /> : <PremiumStocks /> : <Locked email={user.email} />}
-        {user.premium && <p className="mt-6 border-t border-[#1e2638] pt-4 text-[11px] leading-relaxed text-slate-600">Live prices and candles come only from your Kotak Neo feed during NSE/BSE hours (09:15–15:30 IST, Mon–Fri). Candles and indicators build up from live ticks, so a chart starts when the server starts receiving prices and there is no historical backfill. Signals and setups are informational analysis, not investment advice, and can be wrong. No orders are placed from this page.</p>}
+        {user.premium ? view === "indices" ? <PremiumIndices /> : view === "stocks" ? <PremiumStocks /> : view === "compare" ? <StockCompare /> : <StockPage symbol={(symbol ?? "").toUpperCase()} /> : <Locked email={user.email} />}
+        {user.premium && <p className="mt-6 border-t border-[#1e2638] pt-4 text-[11px] leading-relaxed text-slate-600">Live prices come only from your Kotak Neo feed during NSE/BSE hours (09:15–15:30 IST, Mon–Fri), and every page says whether its numbers are live, from the last session, delayed or unavailable. Intraday candles build up from live ticks; longer timeframes also use imported history when the owner has loaded it. Signals, setups and tested results are informational analysis of past prices, not investment advice or a promise, and can be wrong. No orders are placed from this page.</p>}
       </main>
     </div>
   );

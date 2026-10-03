@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { Link } from "react-router-dom";
 
 import AnalysisView from "@/components/premium/AnalysisView";
 import { MarketBadge } from "@/components/premium/AnalysisPanels";
@@ -37,6 +38,9 @@ function Expanded({ row }: { row: BreakoutRow }) {
             <p className="mt-2 text-xs text-slate-500">{row.news.status === "ok" ? "No recent headlines found for this stock." : "News is unavailable right now. Nothing is shown rather than guessing."}</p>
           )}
         </div>
+      </div>
+      <div className="flex justify-end">
+        <Link to={`/premium/stocks/${encodeURIComponent(row.symbol)}`} data-testid={`breakout-open-${row.symbol}`} className="rounded-md border border-[#26334b] px-3 py-1.5 text-xs text-sky-300 hover:bg-[#1a2336] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400/50">Open the full {row.symbol} page →</Link>
       </div>
       {detail.data && <AnalysisView detail={detail.data} interval={interval} onInterval={setIntervalValue} />}
       {detail.isPending && <p className="text-xs text-slate-500">Loading chart…</p>}
@@ -96,7 +100,7 @@ export default function PremiumBreakouts() {
       </div>
       {query.isError && <p className="p-4 text-xs text-slate-500">The watchlist is unavailable right now.</p>}
       {data && data.stocks.length === 0 && (
-        <p data-testid="breakout-empty" className="p-4 text-xs leading-relaxed text-slate-500">No stock is within 2% below a resistance level with enough candles right now. Candles build from live prices during market hours (about 35 minutes after the open), so this list is empty when the market is closed.</p>
+        <p data-testid="breakout-empty" className="p-4 text-xs leading-relaxed text-slate-500">No stock is within 2% below a resistance level with enough candles right now. Candles build from live prices during market hours (about 35 minutes after the open), so this list can be empty early in the session. While the market is closed it uses the last recorded session.</p>
       )}
       <ol className="divide-y divide-[#161e30]">
         {(data?.stocks ?? []).map((row, index) => (

@@ -103,6 +103,18 @@ async def test_watchlists_validate_dedupe_and_cap():
     assert await userdata.get_lists(db, "b@x.com") == {}                                              # other users see nothing
 
 
+async def test_patch_adds_and_removes_against_the_current_list_and_never_wipes_others():
+    db, universe = AsyncMongoMockClient()["u"], {"TCS", "INFY", "WIPRO"}
+    await userdata.put_list(db, "a@x.com", "Core", ["TCS", "INFY"], universe)
+    assert (await userdata.patch_list(db, "a@x.com", "Core", ["wipro", "TCS"], [], universe))["Core"] == ["TCS", "INFY", "WIPRO"]
+    assert (await userdata.patch_list(db, "a@x.com", "Core", [], ["infy"], universe))["Core"] == ["TCS", "WIPRO"]
+    both = await userdata.patch_list(db, "a@x.com", "New", ["TCS"], [], universe)                      # creates the list, leaves the other alone
+    assert both == {"Core": ["TCS", "WIPRO"], "New": ["TCS"]}
+    for bad_add, name in ((["NOPE"], "Core"), (["TCS"], "bad/name")):
+        with pytest.raises(HTTPException):
+            await userdata.patch_list(db, "a@x.com", name, bad_add, [], universe)
+
+
 async def test_layouts_keep_only_known_typed_fields():
     db = AsyncMongoMockClient()["u"]
     layouts = await userdata.put_layout(db, "a@x.com", "Swing", {"ema_fast": 5, "ema_slow": 50, "interval": 1440, "pane": "macd", "bb": True, "evil": "<script>", "ema": 0})
@@ -120,12 +132,24 @@ def test_api_watchlists_layouts_are_per_user_and_premium_only(api):
     assert api.client.get("/api/premium/me/watchlists", headers=other).json()["watchlists"] == {}       # another premium user cannot see it
     assert api.client.put("/api/premium/me/watchlists/Core", json={"symbols": ["NOPE"]}, headers=owner).status_code == 422
     assert api.client.get("/api/premium/me/watchlists", headers=free).status_code == 403
+    changed = api.client.patch("/api/premium/me/watchlists/Core", json={"add": ["WIPRO"], "remove": ["INFY"]}, headers=owner)
+    assert changed.status_code == 200 and changed.json()["watchlists"]["Core"] == ["TCS", "WIPRO"]
+    assert api.client.patch("/api/premium/me/watchlists/Core", json={"add": ["NOPE"]}, headers=owner).status_code == 422
+    assert api.client.patch("/api/premium/me/watchlists/Core", json={"add": ["TCS"]}, headers=free).status_code == 403
+    assert api.client.get("/api/premium/me/watchlists", headers=other).json()["watchlists"] == {}
     assert api.client.put("/api/premium/me/layouts/L1", json={"ema_fast": 9, "ema_slow": 20, "interval": 5}, headers=owner).status_code == 200
     assert api.client.get("/api/premium/me/layouts", headers=owner).json()["layouts"]["L1"]["interval"] == 5
     assert api.client.get("/api/premium/me/layouts", headers=other).json()["layouts"] == {}
     assert api.client.delete("/api/premium/me/layouts/L1", headers=owner).json()["layouts"] == {}
     assert api.client.put("/api/premium/me/layouts/L1", json={"interval": 3}, headers=owner).status_code == 422
     assert api.client.get("/api/premium/me/layouts", headers=free).status_code == 403
+
+
+def test_names_must_contain_a_letter_or_number_so_they_survive_inside_a_url_path():
+    for bad in ("..", ".", " - ", "&&&", "", "a.b", "a/b"):
+        with pytest.raises(HTTPException):
+            userdata.clean_name(bad)
+    assert userdata.clean_name(" Banks & PSU ") == "Banks & PSU"
 
 
 def test_api_compare_validates_and_never_invents_data(api):

@@ -141,6 +141,9 @@ export default function App() {
     <Routes>
       <Route path="/" element={<AccessGate />} />
       <Route path="/premium" element={<AccessGate page="premium" />} />
+      <Route path="/premium/stocks" element={<AccessGate page="premium" />} />
+      <Route path="/premium/stocks/:symbol" element={<AccessGate page="premium" />} />
+      <Route path="/premium/compare" element={<AccessGate page="premium" />} />
     </Routes>
   );
 }

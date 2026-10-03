@@ -1,19 +1,25 @@
 import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 
-import { intervalName, price, stamp, whole, type Analysis } from "@/lib/premium";
+import { intervalName, price, stamp, whole, type Analysis, type EngineSignal, type PatternHit } from "@/lib/premium";
 
 // Interactive SVG candlestick chart: hover for values, drag to pan, wheel or +/- to zoom.
-// Overlays: fast/slow EMA (default 9/20), Bollinger bands, VWAP, support/resistance and pivots. Panes: volume, RSI or MACD.
+// Overlays: fast/slow EMA (default 9/20), Bollinger bands, VWAP, support/resistance and pivots, candlestick pattern markers and the
+// engine's trade setup (buy/sell zone, entry, stop, targets). Panes: volume, RSI or MACD.
 
 export interface ChartOptions {
   ema: boolean;
   bb: boolean;
   vwap: boolean;
   levels: boolean;
+  patterns: boolean;
+  setup: boolean;
   pane: "rsi" | "macd" | "none";
 }
 
-const W = 960;
+// The drawing is as wide as its container up to MAX_W, so on a phone text and candles keep their real size instead of being shrunk
+// to fit; wider screens scale the 960-wide drawing up, as before.
+const MAX_W = 960;
+const MIN_W = 300;
 const PAD_R = 64;
 const H_PRICE = 300;
 const H_VOL = 64;
@@ -40,11 +46,16 @@ function pathFor(values: Nums | undefined, start: number, end: number, x: (i: nu
   return d;
 }
 
-export default function PriceChart({ analysis, options }: { analysis: Analysis; options: ChartOptions }) {
+export default function PriceChart({ analysis, options, engine }: { analysis: Analysis; options: ChartOptions; engine?: EngineSignal | null }) {
   const candles = analysis.candles;
   const series = analysis.series;
   const n = candles.length;
-  const [count, setCount] = useState(90);
+  const [wrap, setWrap] = useState<HTMLDivElement | null>(null);
+  const [width, setWidth] = useState(MAX_W);
+  const W = width;
+  const defaultCount = W < 560 ? 45 : 90; // fewer, wider candles on a phone
+  const [zoomCount, setZoomCount] = useState<number | null>(null); // null = automatic
+  const count = zoomCount ?? defaultCount;
   const [offset, setOffset] = useState(0);
   const [hover, setHover] = useState<number | null>(null);
   const svgRef = useRef<SVGSVGElement | null>(null);
@@ -62,19 +73,29 @@ export default function PriceChart({ analysis, options }: { analysis: Analysis; 
   const showPane = options.pane !== "none" && !!series;
   const height = H_PRICE + (hasVolume ? GAP + H_VOL : 0) + (showPane ? GAP + H_IND : 0) + AXIS;
 
-  const zoom = (factor: number) => setCount((c) => Math.round(Math.max(MIN_BARS, Math.min(Math.max(n, MIN_BARS), c * factor))));
+  const zoom = (factor: number) => setZoomCount((c) => Math.round(Math.max(MIN_BARS, Math.min(Math.max(n, MIN_BARS), (c ?? defaultCount) * factor))));
+
+  useEffect(() => {
+    if (!wrap || typeof ResizeObserver === "undefined") return;
+    const measure = () => setWidth(Math.max(MIN_W, Math.min(MAX_W, Math.round(wrap.getBoundingClientRect().width))));
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(wrap);
+    return () => observer.disconnect();
+  }, [wrap]);
 
   useEffect(() => {
     const el = svgRef.current;
     if (!el) return;
     const onWheel = (event: WheelEvent) => {
       event.preventDefault();
-      setCount((c) => Math.round(Math.max(MIN_BARS, Math.min(Math.max(n, MIN_BARS), c * (event.deltaY < 0 ? 0.85 : 1.18)))));
+      setZoomCount((c) => Math.round(Math.max(MIN_BARS, Math.min(Math.max(n, MIN_BARS), (c ?? defaultCount) * (event.deltaY < 0 ? 0.85 : 1.18)))));
     };
     el.addEventListener("wheel", onWheel, { passive: false });
     return () => el.removeEventListener("wheel", onWheel);
-  }, [n]);
+  }, [n, defaultCount]);
 
+  const setup = options.setup ? engine?.setup ?? null : null;
   const domain = useMemo(() => {
     let lo = Infinity;
     let hi = -Infinity;
@@ -88,17 +109,26 @@ export default function PriceChart({ analysis, options }: { analysis: Analysis; 
         if (l !== null && l !== undefined) lo = Math.min(lo, l);
       }
     }
+    if (setup) {
+      // Keep entry, stop and target 1 on screen; target 2 only when it is not far away (it would flatten the candles).
+      const shown = [setup.entry, setup.stop, setup.targets[0], ...(Math.abs(setup.targets[1] - setup.entry) <= 6 * setup.atr ? [setup.targets[1]] : [])];
+      for (const v of shown) {
+        lo = Math.min(lo, v);
+        hi = Math.max(hi, v);
+      }
+    }
     if (!Number.isFinite(lo) || !Number.isFinite(hi)) return { lo: 0, hi: 1 };
     const pad = (hi - lo) * 0.06 || hi * 0.001 || 1;
     return { lo: lo - pad, hi: hi + pad };
-  }, [candles, series, start, end, options.bb]);
+  }, [candles, series, start, end, options.bb, setup]);
 
   if (n === 0) {
-    return <div data-testid="chart-empty" className="flex h-64 items-center justify-center rounded-lg border border-dashed border-[#202b42] px-4 text-center text-xs text-slate-500">No live candles yet. They appear once live ticks arrive during market hours (09:15–15:30 IST).</div>;
+    return <div ref={setWrap} data-testid="chart-empty" className="flex h-64 items-center justify-center rounded-lg border border-dashed border-[#202b42] px-4 text-center text-xs text-slate-500">No live candles yet. They appear once live ticks arrive during market hours (09:15–15:30 IST).</div>;
   }
 
   const span = domain.hi - domain.lo || 1;
   const yPrice = (v: number) => ((domain.hi - v) / span) * H_PRICE;
+  const last = candles[n - 1];
   const volTop = H_PRICE + GAP;
   let maxVol = 0;
   for (let i = start; i < end; i++) maxVol = Math.max(maxVol, candles[i].volume);
@@ -111,6 +141,31 @@ export default function PriceChart({ analysis, options }: { analysis: Analysis; 
     for (const v of analysis.levels.support) if (inView(v)) levelLines.push({ value: v, label: "S", color: "#34d399" });
     const pp = analysis.levels.pivots?.pp;
     if (inView(pp)) levelLines.push({ value: pp, label: "PP", color: "#38bdf8" });
+  }
+
+  // Right-axis labels: the price tag wins, then levels from the top down; a label that would sit on top of another is left out
+  // (its line is still drawn), and so are price ticks that coincide with a level label.
+  const taken: number[] = [yPrice(last.close)];
+  const shownLevels = [...levelLines].sort((a, b) => yPrice(a.value) - yPrice(b.value)).map((l) => {
+    const ly = yPrice(l.value);
+    const show = taken.every((t) => Math.abs(t - ly) >= 11);
+    if (show) taken.push(ly);
+    return { ...l, show };
+  });
+
+  const markerAt = new Map<number, PatternHit[]>();
+  if (options.patterns) {
+    for (const hit of engine?.markers ?? []) {
+      const list = markerAt.get(hit.time);
+      if (list) list.push(hit);
+      else markerAt.set(hit.time, [hit]);
+    }
+  }
+  const setupLines: { value: number; label: string; color: string }[] = [];
+  if (setup) {
+    const verb = setup.zone_label;
+    const pairs: [number, string, string][] = [[setup.entry, `Entry ${price(setup.entry)} · ${verb}`, "#60a5fa"], [setup.stop, `Stop ${price(setup.stop)}`, "#fb7185"], [setup.targets[0], `T1 ${price(setup.targets[0])}`, "#34d399"], [setup.targets[1], `T2 ${price(setup.targets[1])}`, "#6ee7b7"]];
+    for (const [value, label, color] of pairs) if (inView(value)) setupLines.push({ value, label, color });
   }
 
   const pointerIndex = (clientX: number): number | null => {
@@ -142,22 +197,23 @@ export default function PriceChart({ analysis, options }: { analysis: Analysis; 
   const shown = hover ?? end - 1;
   const bar = candles[Math.max(0, Math.min(n - 1, shown))];
   const at = (values: Nums | undefined) => (values ? values[Math.max(0, Math.min(n - 1, shown))] : null);
-  const last = candles[n - 1];
+  const shownHits = markerAt.get(bar.time) ?? [];
   const labelStep = Math.max(1, Math.round(visibleCount / (analysis.interval >= 60 ? 4 : 6)));
   const volLabel = (v: number) => (v >= 1e7 ? `${(v / 1e7).toFixed(1)}Cr` : v >= 1e5 ? `${(v / 1e5).toFixed(1)}L` : v >= 1e3 ? `${(v / 1e3).toFixed(0)}k` : String(v));
 
   return (
-    <div data-testid="price-chart" className="space-y-2">
+    <div ref={setWrap} data-testid="price-chart" className="space-y-2">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <p data-testid="chart-readout" className="font-mono text-[11px] tabular-nums text-slate-400">
           <span className="text-slate-500">{stamp(bar.time, analysis.interval)}</span> O {price(bar.open)} H {price(bar.high)} L {price(bar.low)} <span className={bar.close >= bar.open ? "text-emerald-300" : "text-rose-300"}>C {price(bar.close)}</span>
           {hasVolume && <> V {whole(bar.volume)}</>}
+          {shownHits.length > 0 && <span data-testid="chart-pattern-readout" className="text-violet-300"> · {shownHits.map((h) => h.name).join(", ")}</span>}
           {options.ema && <> <span className="text-amber-300">E{analysis.ema_periods?.[0] ?? 9} {price(at(series?.ema_fast))}</span> <span className="text-sky-300">E{analysis.ema_periods?.[1] ?? 20} {price(at(series?.ema_slow))}</span></>}
         </p>
         <div className="flex items-center gap-1" role="group" aria-label="Chart zoom">
           <button type="button" aria-label="Zoom out" onClick={() => zoom(1.3)} className="h-7 w-7 rounded-md border border-[#26334b] text-sm text-slate-300 hover:bg-[#1a2336]">−</button>
           <button type="button" aria-label="Zoom in" onClick={() => zoom(0.77)} className="h-7 w-7 rounded-md border border-[#26334b] text-sm text-slate-300 hover:bg-[#1a2336]">+</button>
-          <button type="button" aria-label="Show latest" onClick={() => { setOffset(0); setCount(90); }} className="h-7 rounded-md border border-[#26334b] px-2 text-[11px] text-slate-300 hover:bg-[#1a2336]">Latest</button>
+          <button type="button" aria-label="Show latest" onClick={() => { setOffset(0); setZoomCount(null); }} className="h-7 rounded-md border border-[#26334b] px-2 text-[11px] text-slate-300 hover:bg-[#1a2336]">Latest</button>
         </div>
       </div>
       <svg
@@ -174,17 +230,18 @@ export default function PriceChart({ analysis, options }: { analysis: Analysis; 
       >
         {[0, 0.25, 0.5, 0.75, 1].map((f) => {
           const v = domain.hi - span * f;
+          const crowded = taken.some((t) => Math.abs(t - f * H_PRICE) < 10);
           return (
             <g key={f}>
               <line x1={0} x2={plotW} y1={f * H_PRICE} y2={f * H_PRICE} stroke="#1a2336" strokeWidth={1} />
-              <text x={plotW + 6} y={f * H_PRICE + 3} fontSize={10} fill="#64748b" fontFamily="monospace">{price(v)}</text>
+              {!crowded && <text x={plotW + 6} y={Math.max(10, f * H_PRICE + 3)} fontSize={10} fill="#64748b" fontFamily="monospace">{price(v)}</text>}
             </g>
           );
         })}
-        {levelLines.map((l) => (
+        {shownLevels.map((l) => (
           <g key={`${l.label}-${l.value}`}>
             <line x1={0} x2={plotW} y1={yPrice(l.value)} y2={yPrice(l.value)} stroke={l.color} strokeOpacity={0.55} strokeDasharray="5 4" strokeWidth={1} />
-            <text x={plotW + 6} y={yPrice(l.value) + 3} fontSize={9} fill={l.color} fontFamily="monospace">{l.label} {price(l.value)}</text>
+            {l.show && <text x={plotW + 6} y={yPrice(l.value) + 3} fontSize={9} fill={l.color} fontFamily="monospace">{l.label} {price(l.value)}</text>}
           </g>
         ))}
         {options.bb && series && (
@@ -205,6 +262,33 @@ export default function PriceChart({ analysis, options }: { analysis: Analysis; 
               <rect x={x(i) - bodyW / 2} y={top} width={bodyW} height={Math.max(1, bottom - top)} fill={color} />
             </g>
           );
+        })}
+        {setup && (
+          <g data-testid="chart-setup">
+            <rect x={0} y={yPrice(setup.entry_zone[1])} width={plotW} height={Math.max(2, yPrice(setup.entry_zone[0]) - yPrice(setup.entry_zone[1]))} fill={setup.direction === "LONG" ? "#34d399" : "#fb7185"} fillOpacity={0.14} />
+            {setupLines.map((l) => (
+              <g key={l.label}>
+                <line x1={0} x2={plotW} y1={yPrice(l.value)} y2={yPrice(l.value)} stroke={l.color} strokeOpacity={0.9} strokeWidth={1.2} strokeDasharray={l.label.startsWith("Entry") ? undefined : "6 3"} />
+                <rect x={4} y={yPrice(l.value) - 8} width={l.label.length * 5.7 + 8} height={14} rx={3} fill="#090d15" fillOpacity={0.88} />
+                <text x={8} y={yPrice(l.value) + 3} fontSize={9} fill={l.color} fontFamily="monospace">{l.label}</text>
+              </g>
+            ))}
+          </g>
+        )}
+        {options.patterns && candles.slice(start, end).map((c, k) => {
+          const hits = markerAt.get(c.time);
+          if (!hits) return null;
+          const cx = x(start + k);
+          return hits.map((hit, j) => {
+            const below = hit.direction === "bullish";
+            const base = below ? yPrice(c.low) + 5 + j * 9 : yPrice(c.high) - 5 - j * 9;
+            const points = hit.direction === "bullish" ? `${cx},${base} ${cx - 4},${base + 7} ${cx + 4},${base + 7}` : hit.direction === "bearish" ? `${cx},${base} ${cx - 4},${base - 7} ${cx + 4},${base - 7}` : `${cx},${base - 8} ${cx + 4},${base - 4} ${cx},${base} ${cx - 4},${base - 4}`;
+            return (
+              <polygon key={`${c.time}-${hit.name}`} data-testid="chart-pattern-marker" points={points} fill={hit.direction === "bullish" ? "#34d399" : hit.direction === "bearish" ? "#fb7185" : "#a78bfa"} stroke="#090d15" strokeWidth={0.6}>
+                <title>{`${hit.name} (${hit.direction}): ${hit.explanation}`}</title>
+              </polygon>
+            );
+          });
         })}
         {options.ema && series && (
           <>
@@ -251,7 +335,7 @@ export default function PriceChart({ analysis, options }: { analysis: Analysis; 
           );
         })()}
 
-        {candles.slice(start, end).map((c, k) => (k % labelStep === 0 ? <text key={c.time} x={Math.min(plotW - (analysis.interval >= 60 ? 60 : 28), x(start + k) - 14)} y={height - 5} fontSize={10} fill="#64748b" fontFamily="monospace">{stamp(c.time, analysis.interval)}</text> : null))}
+        {candles.slice(start, end).map((c, k) => (k % labelStep === 0 ? <text key={c.time} x={Math.max(2, Math.min(plotW - (analysis.interval >= 60 ? 60 : 28), x(start + k) - 14))} y={height - 5} fontSize={10} fill="#64748b" fontFamily="monospace">{stamp(c.time, analysis.interval)}</text> : null))}
         {hover !== null && (
           <g pointerEvents="none">
             <line x1={x(hover)} x2={x(hover)} y1={0} y2={height - AXIS} stroke="#94a3b8" strokeOpacity={0.5} strokeDasharray="3 3" />
@@ -262,6 +346,8 @@ export default function PriceChart({ analysis, options }: { analysis: Analysis; 
         {options.ema && <span><span className="text-amber-300">━</span> EMA {analysis.ema_periods?.[0] ?? 9} <span className="text-sky-300">━</span> EMA {analysis.ema_periods?.[1] ?? 20}</span>}
         {options.bb && <span><span className="text-violet-300">━</span> Bollinger 20,2</span>}
         {options.vwap && <span><span className="text-pink-300">┅</span> VWAP</span>}
+        {setup && <span><span className="text-sky-300">━</span> entry <span className="text-rose-300">┅</span> stop <span className="text-emerald-300">┅</span> targets (shaded band = {setup.zone_label.toLowerCase()})</span>}
+        {options.patterns && markerAt.size > 0 && <span><span className="text-emerald-300">▲</span> bullish <span className="text-rose-300">▼</span> bearish <span className="text-violet-300">◆</span> neutral candle pattern (hover for the name)</span>}
         {options.levels && <span><span className="text-emerald-300">┅</span> support <span className="text-rose-300">┅</span> resistance <span className="text-sky-300">┅</span> pivot</span>}
         <span>Showing {end - start} of {n} candles. Drag to pan, scroll or +/− to zoom.</span>
       </p>
