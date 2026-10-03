@@ -230,6 +230,15 @@ class PremiumMarket:
             return []
         return [dict(self.candles[symbol][m]) for m in sorted(self.candles.get(symbol, {}))]
 
+    async def bars_for_day(self, symbol: str, trading_day: str) -> list[dict[str, Any]]:
+        """Stored 1-minute candles of one earlier session (used to fill the days between an import and today)."""
+        try:
+            docs = await self._col().find({"symbol": symbol, "trading_day": trading_day}, {"_id": 0}).sort("time", 1).to_list(1000)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("PREMIUM_DAY_BARS_ERROR kind=%s", type(exc).__name__)
+            return []
+        return [{k: d[k] for k in ("time", "open", "high", "low", "close", "volume") if k in d} for d in docs]
+
     async def previous_session(self, symbol: str, now: datetime | None = None) -> dict[str, float] | None:
         """High, low and close of the latest earlier session that has stored candles (None if there is none yet)."""
         today = (now or datetime.now(timezone.utc)).astimezone(IST).date().isoformat()
