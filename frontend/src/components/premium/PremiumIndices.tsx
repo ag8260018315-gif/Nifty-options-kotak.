@@ -4,18 +4,22 @@ import { useQuery } from "@tanstack/react-query";
 import AnalysisView from "@/components/premium/AnalysisView";
 import { MarketBadge } from "@/components/premium/AnalysisPanels";
 import { apiGet } from "@/lib/api";
-import { INDEX_LABEL, PREMIUM_INDICES, pollMs, price, signed, tone, type Detail, type IndexRow, type IndexSymbol4, type Interval } from "@/lib/premium";
+import { DEFAULT_EMA, INDEX_LABEL, PREMIUM_INDICES, pollMs, price, signed, tone, type Detail, type IndexRow, type IndexSymbol4, type Interval } from "@/lib/premium";
+import { keepPreviousData } from "@/lib/premiumData";
 
 export default function PremiumIndices() {
   const [symbol, setSymbol] = useState<IndexSymbol4>("NIFTY");
   const [interval, setIntervalValue] = useState<Interval>(1);
+  const [ema, setEma] = useState<[number, number]>([DEFAULT_EMA[0], DEFAULT_EMA[1]]);
   const strip = useQuery({ queryKey: ["premium-indices"], queryFn: () => apiGet<{ indices: IndexRow[] }>("/premium/indices"), refetchInterval: 3000, retry: false });
   const detail = useQuery({
-    queryKey: ["premium-index", symbol, interval],
-    queryFn: () => apiGet<Detail>(`/premium/index/${symbol}?interval=${interval}`),
+    queryKey: ["premium-index", symbol, interval, ema[0], ema[1]],
+    queryFn: () => apiGet<Detail>(`/premium/index/${symbol}?interval=${interval}&ema_fast=${ema[0]}&ema_slow=${ema[1]}`),
     refetchInterval: (query) => pollMs(query.state.data?.market.state),
     retry: false,
+    placeholderData: keepPreviousData, // keep the chart while a new timeframe or EMA loads
   });
+  const data = detail.data && detail.data.symbol === symbol ? detail.data : null; // never show another index's data
   return (
     <div data-testid="premium-indices" className="space-y-4">
       <div className="grid grid-cols-2 gap-2 lg:grid-cols-4">
@@ -35,8 +39,8 @@ export default function PremiumIndices() {
         })}
       </div>
       {detail.isError && <p data-testid="premium-index-error" className="rounded-lg border border-[#202b42] p-4 text-xs text-slate-500">This index is unavailable right now.</p>}
-      {detail.data && <AnalysisView detail={detail.data} interval={interval} onInterval={setIntervalValue} />}
-      {detail.isPending && <p className="p-4 text-xs text-slate-500">Loading live data…</p>}
+      {data && <AnalysisView detail={data} interval={interval} onInterval={setIntervalValue} ema={ema} onEma={setEma} />}
+      {!data && !detail.isError && <p className="p-4 text-xs text-slate-500">Loading live data…</p>}
     </div>
   );
 }

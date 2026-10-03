@@ -132,13 +132,87 @@ export interface Analysis {
   disclaimer: string;
 }
 
+export type Bias = "Bullish" | "Bearish" | "Neutral" | "Unavailable";
+export type DataStatus = "LIVE" | "HISTORICAL" | "DELAYED" | "UNAVAILABLE";
+
+export interface PatternHit {
+  name: string;
+  direction: "bullish" | "bearish" | "neutral";
+  time: number;
+  explanation: string;
+}
+
+export interface TradeSetup {
+  direction: "LONG" | "SHORT";
+  entry: number;
+  entry_zone: [number, number];
+  stop: number;
+  targets: [number, number];
+  risk_per_share: number;
+  reward_to_risk: number;
+  atr: number;
+  zone_label: "Buy zone" | "Sell zone";
+  method: string;
+}
+
+// The rules engine's verdict for one instrument. Confidence is signal strength, never a probability of winning.
+export interface EngineSignal {
+  generated_at: string;
+  interval: number;
+  disclaimer: string;
+  bias: Bias;
+  action: "BUY" | "SELL" | "NONE";
+  score: number;
+  confidence: { value: number; meaning: string };
+  reasons: string[];
+  patterns: PatternHit[];
+  markers: PatternHit[];
+  setup: TradeSetup | null;
+  invalidation: string[];
+  trend_strength: number | null;
+  momentum: { value: number; label: string } | null;
+  volatility: { atr_pct: number | null; label: string } | null;
+  as_of_candle: number | null;
+  data: { status: DataStatus; tick_age_seconds: number | null; message: string };
+}
+
+export interface PerformanceStats {
+  trades?: number;
+  wins?: number;
+  win_rate_pct?: number;
+  win_rate_ci95_pct?: [number, number];
+  avg_r?: number;
+  total_r?: number;
+  profit_factor?: number | null;
+  max_drawdown_r?: number;
+  longest_losing_streak?: number;
+  targets?: number;
+  stops?: number;
+  timeouts?: number;
+  by_direction?: Record<"LONG" | "SHORT", { trades: number; win_rate_pct: number | null }>;
+  period?: [string, string];
+  reliable: boolean;
+  note: string;
+  created_at?: string;
+  definition?: string;
+  sessions?: number;
+  stocks_tested?: number;
+  rule?: { horizon_minutes: number; eval_step_minutes: number; cost_pct: number };
+}
+
+// Past results of this rule on stored history. `tested: false` means no number exists, and none is invented.
+export type Performance = { tested: boolean; overall: PerformanceStats | null } & Partial<PerformanceStats>;
+
 export interface Detail {
   label: string;
   symbol: string;
   name: string;
+  sector?: string;
   quote: Quote | null;
   market: MarketInfo;
   analysis: Analysis;
+  engine?: EngineSignal;
+  performance?: Performance; // stocks only
 }
 
 export interface IndexRow {
@@ -163,8 +237,61 @@ export interface QuickSignal {
 
 export interface StockRow {
   symbol: string;
+  name: string;
+  sector: string;
   quote: Quote | null; // null until the first live (or last saved) price exists
   signal: QuickSignal;
+}
+
+export interface StocksMeta {
+  sectors: string[];
+  stocks: { symbol: string; name: string; sector: string }[];
+}
+
+export interface StockNews {
+  symbol: string;
+  news: NewsBlock;
+  note: string;
+}
+
+export type Watchlists = Record<string, string[]>;
+
+export interface Layout {
+  ema_fast: number;
+  ema_slow: number;
+  interval: Interval;
+  pane: "rsi" | "macd" | "none";
+  ema: boolean;
+  bb: boolean;
+  vwap: boolean;
+  levels: boolean;
+  patterns: boolean;
+  setup: boolean;
+}
+
+export interface CompareRow {
+  symbol: string;
+  name: string;
+  sector: string;
+  quote: Quote | null;
+  market: MarketInfo;
+  bias: Bias;
+  score: number;
+  data_status: DataStatus;
+  trend: string;
+  rsi: number | null;
+  volatility: { atr_pct: number | null; label: string } | null;
+  relative_volume: number | null;
+  change_over_window_pct: number | null;
+  series: number[];
+  times: number[];
+}
+
+export interface CompareResponse {
+  interval: number;
+  window_candles: number;
+  stocks: CompareRow[];
+  note: string;
 }
 
 export interface NewsItem {
@@ -288,6 +415,46 @@ export function isPremiumRequired(error: unknown): boolean {
   if (!(error instanceof ApiError) || error.status !== 403) return false;
   const detail = (error.body as { detail?: { code?: string } } | null)?.detail;
   return typeof detail === "object" && detail !== null && detail.code === "premium_required";
+}
+
+// The list rows carry the quick score-based action; show it with the same words the detail page uses.
+export function biasFromAction(action: Action): Bias {
+  return action === "BUY" ? "Bullish" : action === "SELL" ? "Bearish" : action === "NEUTRAL" ? "Neutral" : "Unavailable";
+}
+
+// "3 s ago", "2 min ago": how old the last price is, so a stale number can never pass as live.
+export function tickAge(seconds: number | null | undefined): string {
+  if (seconds === null || seconds === undefined || !Number.isFinite(seconds)) return "no price received yet";
+  if (seconds < 90) return `${Math.max(0, Math.round(seconds))} s ago`;
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 120) return `${minutes} min ago`;
+  const hours = Math.round(minutes / 60);
+  return hours < 48 ? `${hours} h ago` : `${Math.round(hours / 24)} days ago`;
+}
+
+export function clockTime(iso: string | null | undefined): string {
+  if (!iso) return "—";
+  const date = new Date(iso);
+  return Number.isNaN(date.getTime()) ? "—" : date.toLocaleString("en-IN", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit", hour12: false, timeZone: "Asia/Kolkata" }) + " IST";
+}
+
+export const DEFAULT_EMA: [number, number] = [9, 20];
+
+// Mirrors the server's rule for watchlist and layout names. A "/" or "." would also be read as part of the address, so they are refused here first.
+export function checkName(name: string): string | null {
+  const trimmed = name.trim();
+  if (!trimmed) return "Give it a name first.";
+  if (!/^[\p{L}\p{N}_ &-]{1,30}$/u.test(trimmed) || !/[\p{L}\p{N}]/u.test(trimmed)) return "Use letters, numbers, spaces and & - _ (up to 30 characters, with at least one letter or number).";
+  return null;
+}
+
+// Mirrors the server's limits so a bad value is caught before a request is made.
+export function validEma(fast: number, slow: number): string | null {
+  if (!Number.isInteger(fast) || !Number.isInteger(slow)) return "Use whole numbers.";
+  if (fast < 2 || fast > 100) return "Fast EMA must be 2 to 100.";
+  if (slow < 3 || slow > 300) return "Slow EMA must be 3 to 300.";
+  if (slow <= fast) return "Slow EMA must be longer than fast EMA.";
+  return null;
 }
 
 // Poll quickly while prices can change; slowly when the market is closed.

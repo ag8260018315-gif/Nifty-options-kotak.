@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { Link } from "react-router-dom";
 
 import AnalysisView from "@/components/premium/AnalysisView";
 import { MarketBadge } from "@/components/premium/AnalysisPanels";
@@ -37,6 +38,9 @@ function Expanded({ row }: { row: BreakoutRow }) {
             <p className="mt-2 text-xs text-slate-500">{row.news.status === "ok" ? "No recent headlines found for this stock." : "News is unavailable right now. Nothing is shown rather than guessing."}</p>
           )}
         </div>
+      </div>
+      <div className="flex justify-end">
+        <Link to={`/premium/stocks/${encodeURIComponent(row.symbol)}`} data-testid={`breakout-open-${row.symbol}`} className="rounded-md border border-[#26334b] px-3 py-1.5 text-xs text-sky-300 hover:bg-[#1a2336] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400/50">Open the full {row.symbol} page →</Link>
       </div>
       {detail.data && <AnalysisView detail={detail.data} interval={interval} onInterval={setIntervalValue} />}
       {detail.isPending && <p className="text-xs text-slate-500">Loading chart…</p>}
