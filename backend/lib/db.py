@@ -47,6 +47,7 @@ INDEXES: dict[str, list[IndexModel]] = {
 
 
 RESEARCH_INDEXES: dict[str, list[IndexModel]] = {
+    "stock_days": [IndexModel([("symbol", ASCENDING), ("trading_day", ASCENDING)], name="symbol_day")],
     "candles": [IndexModel([("symbol", ASCENDING), ("time", ASCENDING)], name="symbol_time")],
     "optimization_results": [IndexModel([("created_at", DESCENDING)], name="created_at_desc")],
 }

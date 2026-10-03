@@ -35,6 +35,7 @@ def api(monkeypatch):
     monkeypatch.setattr(premium_market, "quotes_override", db["premium_quotes"])
     monkeypatch.setattr(premium_market, "_quotes_restored", False)
     premium_market.quotes.clear()
+    monkeypatch.setattr(rpm, "research_db", AsyncMongoMockClient()["research"])
     rpm._prev_cache.clear()
     rpm._quick_cache.clear()
     premium._cache.clear()
@@ -325,3 +326,21 @@ def test_breakout_endpoint_ranks_by_score_and_never_claims_a_probability(api, mo
     assert 0 < top["setup"]["score"] <= 100 and top["news"]["items"][0]["title"] == "TCS headline" and j["accuracy"]["validated"] is False
     assert "probab" in j["accuracy"]["note"] and "90" not in str(j)
     assert api.client.get("/api/premium/stocks/breakouts", headers=api.cookie("viewer@example.com")).status_code == 403
+
+
+def test_breakout_list_shows_the_backtest_only_when_one_exists(api):
+    import asyncio
+
+    import routers.premium_market as rpm
+    from premium import backtest as bt
+
+    path = {"Cookie": api.cookie("paid@example.com")["Cookie"]}
+    none = api.client.get("/api/premium/stocks/breakouts", headers=path).json()["accuracy"]
+    assert none["validated"] is False and "backtest" not in none
+
+    recs = [{"symbol": "A", "day": f"2026-06-{(i % 28) + 1:02d}", "score": 70, "result": "SUCCESS" if i % 2 else "STOP"} for i in range(250)]
+    stored = bt.summarize(recs, bt.Rule(), sessions_tested=60, symbols_tested=30)
+    asyncio.run(rpm.research_db["breakout_backtests"].replace_one({"_id": "latest"}, {"_id": "latest", **stored}, upsert=True))
+    shown = api.client.get("/api/premium/stocks/breakouts", headers=path).json()["accuracy"]
+    assert shown["validated"] is True and shown["backtest"]["setups"] == 250 and shown["backtest"]["hit_rate_pct"] == 50.0
+    assert "definition" in shown["backtest"] and "promise" in shown["note"].lower()
