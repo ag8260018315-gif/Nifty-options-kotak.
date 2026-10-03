@@ -112,81 +112,78 @@ def test_outcome_rules_including_stop_first_on_ambiguous_candle():
     assert bt.outcome(100.0, 100.8, down, rule)[0] == "STOP"
     both = [{"open": 100, "high": 101.5, "low": 99.4, "close": 101.3}]
     assert bt.outcome(100.0, 100.8, both, rule)[0] == "STOP"           # conservative when one candle spans both
+    assert bt.pure_outcome(100.0, up, rule) == "SUCCESS" and bt.pure_outcome(100.0, both, rule) == "STOP"
+    assert bt.pure_outcome(100.0, [{"open": 100, "high": 100.3, "low": 99.9, "close": 100.1}], rule) == "TIMEOUT"
 
 
-def test_signal_is_found_and_scored_without_looking_ahead():
+def test_moments_always_have_a_full_look_forward_window():
+    rule = bt.Rule(horizon_minutes=30, eval_step_minutes=15)
+    assert all(i + rule.horizon_minutes < 100 for i in bt._moments(100, rule))
+    assert list(bt._moments(40, rule)) == []  # too short to evaluate
+
+
+def test_scores_use_only_past_candles_later_candles_change_only_the_outcome():
+    rule = bt.Rule()
     up = make_day(CLIMB + [CLIMB[-1] + j * 0.12 for j in range(1, 41)])
-    hit = bt.first_setup(up, PREV, bt.Rule())
-    assert hit and hit["result"] == "SUCCESS" and 0 < hit["score"] <= 100
-    idx = (hit["time"] - T0) // 60 - 1                                   # the bar that had just closed at the signal
-    crash = up[: idx + 1] + make_day([up[idx]["close"] - j * 0.2 for j in range(1, 60)], start=up[idx]["time"] + 60)
-    again = bt.first_setup(crash, PREV, bt.Rule())
-    assert {k: again[k] for k in ("time", "entry", "score", "resistance", "distance_pct")} == {k: hit[k] for k in ("time", "entry", "score", "resistance", "distance_pct")}
-    assert again["result"] == "STOP"  # only the OUTCOME can depend on later candles
+    crash_from = 50
+    crash = up[: crash_from + 1] + make_day([up[crash_from]["close"] - j * 0.2 for j in range(1, len(up) - crash_from)], start=up[crash_from]["time"] + 60)
+    a, b = bt.observe_session("X", "2026-06-03", up, PREV, rule), bt.observe_session("X", "2026-06-03", crash, PREV, rule)
+    assert len(a) == len(b) and len(a) > 0
+    for x, y in zip(a, b):
+        moment_index = (x[1] - T0) // 60 - 1
+        if moment_index <= crash_from:
+            assert x[3] == y[3] and x[1] == y[1]                         # same score at the same moment
+    assert any(x[4] != y[4] for x, y in zip(a, b))                       # but what happened afterwards differs
 
 
-def test_no_signal_when_too_few_candles_or_no_resistance_nearby():
-    assert bt.first_setup(make_day(CLIMB[:20]), PREV, bt.Rule()) is None
-    flat = make_day([100.0 + (i % 2) * 0.01 for i in range(80)])
-    assert bt.first_setup(flat, {"high": 130.0, "low": 70.0, "close": 100.0}, bt.Rule()) is None  # resistance more than 2% away
+def obs(days=60, moments=3, n_stocks=20, success=lambda d, m, i: False, score=lambda d, m, i: 90 - i):
+    return [(f"2026-{1 + d // 28:02d}-{1 + d % 28:02d}", 1000 + m, f"S{i}", score(d, m, i), "SUCCESS" if success(d, m, i) else "STOP", "SUCCESS" if success(d, m, i) else "STOP")
+            for d in range(days) for m in range(moments) for i in range(n_stocks)]
 
 
-def test_summary_validation_threshold_and_bands():
-    recs = [{"symbol": "A", "day": f"2026-06-{(i % 28) + 1:02d}", "score": 40 + (i % 60), "result": "SUCCESS" if i % 3 else "STOP"} for i in range(250)]
-    s = bt.summarize(recs, bt.Rule(), sessions_tested=60, symbols_tested=30)
-    assert s["validated"] and s["setups"] == 250 and 60 < s["hit_rate_pct"] < 70 and s["ci95_low_pct"] < s["hit_rate_pct"] < s["ci95_high_pct"]
-    assert sum(b["setups"] for b in s["by_score_band"]) == 250 and "not a promise" in s["note"].lower()
-    few = bt.summarize(recs[:20], bt.Rule(), sessions_tested=10, symbols_tested=3)
-    assert few["validated"] is False and "Not enough history" in few["note"]
-    empty = bt.summarize([], bt.Rule(), 0, 0)
-    assert empty["hit_rate_pct"] is None and empty["validated"] is False
+def test_cross_section_better_worse_same_and_unknown():
+    rule = bt.Rule()
+    better = bt.summarize(bt.cross_section(obs(success=lambda d, m, i: i < 5), rule), rule, 20)
+    assert better["comparison"]["verdict"] == "BETTER" and better["comparison"]["listed_rate_pct"] == 50.0 and better["comparison"]["random_rate_pct"] == 25.0
+    worse = bt.summarize(bt.cross_section(obs(success=lambda d, m, i: i >= 15), rule), rule, 20)
+    assert worse["comparison"]["verdict"] == "WORSE"
+    same = bt.summarize(bt.cross_section(obs(success=lambda d, m, i: (d + m) % 2 == 0), rule), rule, 20)  # every stock moves together
+    assert same["comparison"]["verdict"] == "SAME" and same["comparison"]["difference_points"] == 0
+    assert bt.summarize(bt.cross_section([], rule), rule, 0)["comparison"]["verdict"] == "UNKNOWN"
 
 
-async def test_run_and_store_then_router_reports_it(monkeypatch):
+def test_matching_by_moment_removes_the_time_of_day_effect():
+    """Early moments are easy for everyone; a list that is merely evaluated early must not look skilful."""
+    rule = bt.Rule()
+    early_is_easy = obs(days=60, moments=4, success=lambda d, m, i: m == 0)  # every stock succeeds at moment 0, none later
+    s = bt.summarize(bt.cross_section(early_is_easy, rule), rule, 20)
+    assert s["comparison"]["verdict"] == "SAME" and s["comparison"]["difference_points"] == 0
+
+
+def test_groups_without_enough_stocks_are_skipped():
+    rule = bt.Rule()
+    cs = bt.cross_section(obs(n_stocks=12, success=lambda d, m, i: i < 5), rule)  # 12 < 2 x 10
+    assert cs["pooled"]["moments"] == 0
+
+
+def test_validation_needs_enough_days_and_stock_moments():
+    rule = bt.Rule()
+    big = bt.summarize(bt.cross_section(obs(days=60, moments=4, success=lambda d, m, i: i < 5), rule), rule, 20)
+    assert big["validated"] is True and "not a promise" in big["note"].lower()
+    small = bt.summarize(bt.cross_section(obs(days=5, moments=2, success=lambda d, m, i: i < 5), rule), rule, 20)
+    assert small["validated"] is False and "Not enough history" in small["note"] and sum(b["setups"] for b in small["by_score_band"]) > 0
+
+
+async def test_run_and_store_end_to_end_with_candles():
     from jobs import breakout_validation as bv
 
     db = AsyncMongoMockClient()["r"]
     assert await bv.run_and_store(db, bt.Rule()) is None  # nothing stored yet
-    await sh.save_days(db, "TCS", make_day(CLIMB + [CLIMB[-1] + j * 0.12 for j in range(1, 41)]), "upstox")
-    result = await bv.run_and_store(db, bt.Rule())
-    assert result["setups"] == 0 or result["hit_rate_pct"] is not None
-    assert result["comparison"]["random_moments"] > 0
-    stored = await bv.latest(db)
-    assert stored["rule"]["target_pct"] == 1.0 and "definition" in stored
-
-
-def test_pure_move_test_and_baseline_counts():
-    rule = bt.Rule(target_pct=1.0, stop_pct=0.5, horizon_minutes=10)
-    up = [{"open": 100, "high": 101.2, "low": 99.9, "close": 101.0}]
-    assert bt.pure_outcome(100.0, up, rule) == "SUCCESS"
-    assert bt.pure_outcome(100.0, [{"open": 100, "high": 100.2, "low": 99.4, "close": 99.5}], rule) == "STOP"
-    assert bt.pure_outcome(100.0, [{"open": 100, "high": 101.5, "low": 99.4, "close": 101.0}], rule) == "STOP"
-    assert bt.pure_outcome(100.0, [{"open": 100, "high": 100.3, "low": 99.9, "close": 100.1}], rule) == "TIMEOUT"
-    flat = make_day([100.0 + (i % 2) * 0.01 for i in range(120)])
-    scan = bt.scan_session(flat, PREV, bt.Rule(horizon_minutes=30))
-    assert scan["all_n"] > 0 and scan["all_wins"] == 0 and scan["near_n"] <= scan["all_n"]  # a flat stock never moves 1%
-
-
-def test_only_moments_with_a_full_window_are_used():
-    rule = bt.Rule(horizon_minutes=30, eval_step_minutes=15)
-    bars = make_day(CLIMB + [CLIMB[-1] + j * 0.12 for j in range(1, 41)])
-    assert all(i + rule.horizon_minutes < len(bars) for i in bt._moments(len(bars), rule))
-    hit = bt.first_setup(bars, PREV, rule)
-    assert hit is None or hit["bars_after"] == rule.horizon_minutes
-
-
-def test_comparison_verdicts():
-    recs = lambda w, n: [{"move_result": "SUCCESS" if i < w else "STOP"} for i in range(n)]  # noqa: E731
-    base = {"all_n": 10000, "all_wins": 1000, "near_n": 400, "near_move_wins": 40, "near_full_wins": 10}
-    assert bt.compare(recs(300, 1000), base)["verdict"] == "BETTER"           # 30% vs 10%
-    assert bt.compare(recs(10, 1000), base)["verdict"] == "WORSE"             # 1% vs 10%
-    same = bt.compare(recs(95, 1000), base)
-    assert same["verdict"] == "SAME" and "cannot be told apart" in same["verdict_text"]
-    assert bt.compare([], base)["verdict"] == "UNKNOWN"
-
-
-def test_summary_carries_the_comparison_only_when_given():
-    recs = [{"symbol": "A", "day": "2026-06-01", "score": 70, "result": "STOP", "move_result": "STOP"}] * 5
-    assert bt.summarize(recs, bt.Rule(), 5, 1)["comparison"] is None
-    totals = {"all_n": 100, "all_wins": 10, "near_n": 5, "near_move_wins": 0, "near_full_wins": 0}
-    assert bt.summarize(recs, bt.Rule(), 5, 1, totals)["comparison"]["random_rate_pct"] == 10.0
+    for k in range(22):  # enough stocks that a top-10 exists at each moment
+        slope = 0.07 if k % 2 else 0.0
+        for d in range(3):
+            path = [100 + i * slope for i in range(100)]
+            await sh.save_days(db, f"S{k}", make_day(path, start=T0 + d * 86400, volume=lambda i: 1000 + 10 * i), "test")
+    result = await bv.run_and_store(db, bt.Rule(eval_step_minutes=15))
+    assert result["symbols_tested"] == 22 and result["sessions_tested"] == 3 and result["comparison"]["verdict"] in {"BETTER", "SAME", "WORSE", "UNKNOWN"}
+    assert (await bv.latest(db))["method"] == "top_10_by_score_at_each_moment"

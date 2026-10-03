@@ -28,15 +28,14 @@ async def main(args: argparse.Namespace) -> int:
     if result is None:
         print("No stored history yet. Run tools/import_upstox_history.py first.")
         return 1
-    print(f"{datetime.now(timezone.utc):%Y-%m-%d %H:%M} setups={result['setups']} hit_rate={result['hit_rate_pct']}% "
-          f"(95% range {result['ci95_low_pct']}-{result['ci95_high_pct']}%) sessions={result['sessions_tested']} validated={result['validated']}")
+    print(f"{datetime.now(timezone.utc):%Y-%m-%d %H:%M} top-10 list: {result['setups']} stock-moments over {result['sessions_tested']} sessions, "
+          f"{result['symbols_tested']} stocks. Met the success rule: {result['hit_rate_pct']}% (95% range {result['ci95_low_pct']}-{result['ci95_high_pct']}%)")
     for band in result["by_score_band"]:
-        print(f"  score {band['band']}: {band['setups']} setups, hit rate {band['hit_rate_pct']}")
-    c = result.get("comparison")
-    if c:
-        print(f"vs chance (plain move test): listed {c['listed_rate_pct']}% of {c['listed_setups']} | random moments {c['random_rate_pct']}% of {c['random_moments']} | "
-              f"near resistance, any score {c['near_resistance_rate_pct']}% of {c['near_resistance_moments']}")
-        print(f"verdict: {c['verdict']} - {c['verdict_text']}")
+        print(f"  score {band['band']}: {band['setups']} stock-moments, success {band['hit_rate_pct']}%")
+    c = result["comparison"]
+    print(f"vs all stocks at the same moments (plain move test): top 10 {c['listed_rate_pct']}% | all stocks {c['random_rate_pct']}% | "
+          f"difference {c['difference_points']} points (95% range {c['difference_ci95_points'][0]} to {c['difference_ci95_points'][1]}) over {c['days']} days")
+    print(f"verdict: {c['verdict']} - {c['verdict_text']}")
     print(result["note"])
     return 0
 
