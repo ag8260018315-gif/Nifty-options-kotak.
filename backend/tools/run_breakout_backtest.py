@@ -32,6 +32,11 @@ async def main(args: argparse.Namespace) -> int:
           f"(95% range {result['ci95_low_pct']}-{result['ci95_high_pct']}%) sessions={result['sessions_tested']} validated={result['validated']}")
     for band in result["by_score_band"]:
         print(f"  score {band['band']}: {band['setups']} setups, hit rate {band['hit_rate_pct']}")
+    c = result.get("comparison")
+    if c:
+        print(f"vs chance (plain move test): listed {c['listed_rate_pct']}% of {c['listed_setups']} | random moments {c['random_rate_pct']}% of {c['random_moments']} | "
+              f"near resistance, any score {c['near_resistance_rate_pct']}% of {c['near_resistance_moments']}")
+        print(f"verdict: {c['verdict']} - {c['verdict_text']}")
     print(result["note"])
     return 0
 

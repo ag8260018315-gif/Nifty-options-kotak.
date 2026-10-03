@@ -16,8 +16,8 @@ async def run_and_store(research_db: Any, rule: Rule) -> dict[str, Any] | None:
     if not symbols:
         return None
     sessions = len({day for days in symbols.values() for day, _ in days})
-    records = await asyncio.to_thread(run, symbols, rule)  # CPU heavy: keep it off the event loop
-    result = summarize(records, rule, sessions, len(symbols))
+    records, totals = await asyncio.to_thread(run, symbols, rule)  # CPU heavy: keep it off the event loop
+    result = summarize(records, rule, sessions, len(symbols), totals)
     result["created_at"] = datetime.now(timezone.utc).isoformat()
     await research_db[COLLECTION].replace_one({"_id": "latest"}, {"_id": "latest", **result}, upsert=True)
     return result
