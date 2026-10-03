@@ -207,6 +207,7 @@ def analyse(bars: list[dict[str, Any]], interval: int, prev_day: dict[str, float
     score, why = score_signal(last, r, hist, f[-1], s[-1], vwap_closed, vol, levels, closed[-1]["close"] >= closed[-1]["open"])
     action = "BUY" if score >= BUY_AT else "SELL" if score <= SELL_AT else "NEUTRAL"
     strength = None if action == "NEUTRAL" else ("STRONG" if abs(score) >= 70 else "MODERATE" if abs(score) >= 50 else "WEAK")
+    out["vwap"] = _r(vwap_closed)
     out.update(levels=levels, volume=vol, trend=trend_label(cc, f, s),
                signal={"action": action, "score": score, "strength": strength, "reasons": why, "rsi": _r(r, 1), "price": _r(last), "as_of_candle": closed[-1]["time"],
                        "nearest_support": levels["nearest_support"], "nearest_resistance": levels["nearest_resistance"]})

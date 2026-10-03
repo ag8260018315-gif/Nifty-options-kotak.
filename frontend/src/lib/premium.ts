@@ -135,8 +135,59 @@ export interface QuickSignal {
 
 export interface StockRow {
   symbol: string;
-  quote: Quote;
+  quote: Quote | null; // null until the first live (or last saved) price exists
   signal: QuickSignal;
+}
+
+export interface NewsItem {
+  title: string;
+  link: string;
+  source: string | null;
+  published_at: string | null;
+}
+
+export interface NewsBlock {
+  status: "ok" | "unavailable";
+  provider: string;
+  items: NewsItem[];
+}
+
+export interface BreakoutSetup {
+  score: number;
+  distance_pct: number;
+  resistance: number;
+  support: number | null;
+  relative_volume: number | null;
+  buying_pressure_pct: number | null;
+  trend: string | null;
+  rsi: number | null;
+  interval: number | null;
+  reasons: string[];
+}
+
+export interface BreakoutRow {
+  symbol: string;
+  quote: Quote;
+  setup: BreakoutSetup;
+  news: NewsBlock;
+}
+
+export interface BreakoutResponse {
+  count: number;
+  stocks: BreakoutRow[];
+  market: MarketInfo;
+  method: string;
+  accuracy: { validated: boolean; note: string };
+  news_note: string;
+}
+
+export function ago(iso: string | null | undefined): string {
+  if (!iso) return "";
+  const minutes = Math.round((Date.now() - new Date(iso).getTime()) / 60000);
+  if (!Number.isFinite(minutes) || minutes < 0) return "";
+  if (minutes < 60) return `${Math.max(1, minutes)} min ago`;
+  const hours = Math.round(minutes / 60);
+  return hours < 48 ? `${hours} h ago` : `${Math.round(hours / 24)} days ago`;
 }
 
 export interface PremiumStatus {
