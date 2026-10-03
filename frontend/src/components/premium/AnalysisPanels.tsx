@@ -1,4 +1,4 @@
-import { price, signed, tone, whole, type Action, type Analysis, type MarketInfo, type Quote } from "@/lib/premium";
+import { intervalName, price, signed, tone, whole, type Action, type Analysis, type MarketInfo, type Quote } from "@/lib/premium";
 
 const box = "rounded-lg border border-[#202b42] bg-[#0c0f17]/95 p-3";
 
@@ -61,7 +61,7 @@ export function SignalCard({ analysis }: { analysis: Analysis }) {
   return (
     <div data-testid="signal-card" className={box}>
       <div className="flex items-center justify-between gap-2">
-        <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-500">Signal · {analysis.interval}-minute</p>
+        <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-500">Signal · {intervalName(analysis.interval)}</p>
         <ActionPill action={s.action} strength={s.strength} />
       </div>
       {s.action === "BUILDING" ? (
