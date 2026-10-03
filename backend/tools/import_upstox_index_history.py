@@ -1,8 +1,9 @@
-"""Download long-timeframe history for the four indices from Upstox into the app database (read-only market data).
+"""Download long-timeframe history for the four indices (and optionally all 129 stocks) from Upstox into the app database (read-only market data).
 
   python tools/import_upstox_index_history.py --probe            # one index: prints what Upstox returns, saves nothing
   python tools/import_upstox_index_history.py                     # 2 years of daily + 6 months of 30-minute candles
   python tools/import_upstox_index_history.py --daily-years 5 --intraday-months 12 --intraday-chunk 28
+  python tools/import_upstox_index_history.py --stocks --only-stocks      # the 129 stocks too (30-minute + daily, with volume)
 
 The Premium page builds its 1-hour and 4-hour charts from the 30-minute candles and its 1-day and 1-week charts from the daily ones.
 Needs UPSTOX_ACCESS_TOKEN, MONGO_URL and DB_NAME in backend/.env (never paste them into chat or GitHub). Safe to re-run: new candles
@@ -37,7 +38,15 @@ async def main(args: argparse.Namespace) -> int:
     if not token:
         print("FAIL: set UPSTOX_ACCESS_TOKEN in backend/.env first.")
         return 1
-    keys = dict(DEFAULT_KEYS)
+    keys = {} if args.only_stocks else dict(DEFAULT_KEYS)
+    if args.stocks:
+        from premium.universe import stock_symbols
+
+        async with httpx.AsyncClient() as meta_client:
+            found = upstox.symbol_keys(await upstox.load_instruments(meta_client), stock_symbols())
+        missing = [s for s in stock_symbols() if s not in found]
+        print(f"instrument keys found for {len(found)} of {len(stock_symbols())} stocks" + (f"; missing: {missing[:12]}" if missing else ""))
+        keys.update(found)
     for item in args.key or []:
         name, _, value = item.partition("=")
         keys[name.strip().upper()] = value.strip()
@@ -79,6 +88,8 @@ async def main(args: argparse.Namespace) -> int:
 if __name__ == "__main__":
     p = argparse.ArgumentParser()
     p.add_argument("--probe", action="store_true")
+    p.add_argument("--stocks", action="store_true", help="also download the 129 premium stocks")
+    p.add_argument("--only-stocks", action="store_true", help="skip the four indices")
     p.add_argument("--daily-years", type=int, default=2)
     p.add_argument("--intraday-months", type=int, default=6)
     p.add_argument("--daily-chunk", type=int, default=365)

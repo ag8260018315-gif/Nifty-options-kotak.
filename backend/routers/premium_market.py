@@ -5,9 +5,11 @@ import time
 from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Body, Depends, HTTPException, Query
 
 from jobs.breakout_validation import latest as latest_backtest
+from jobs.signal_validation import performance_for
+from lib.premium import require_premium
 from lib.candles import candle_store
 from lib.db import db, research_db
 from lib.feed_worker import feed_worker
@@ -15,6 +17,7 @@ from lib.settings import settings
 import asyncio
 
 from premium import history as index_history
+from premium import userdata
 from premium import news
 from premium.analysis import MIN_BARS, analyse, resample_ohlcv
 from premium.signal_engine import stock_signal
@@ -315,10 +318,75 @@ async def stock_detail(symbol: str, interval: int = Query(default=1), ema_fast: 
     market = _market_for(symbol)
     analysis = await _analyse(symbol, interval, ema=(ema_fast, ema_slow))
     return {"label": LABEL, "symbol": symbol, "name": name_of(symbol), "sector": sector_of(symbol), "quote": premium_market.public_quote(symbol),
-            "market": market, "analysis": analysis, "engine": stock_signal(analysis, market, interval)}
+            "market": market, "analysis": analysis, "engine": stock_signal(analysis, market, interval), "performance": await _performance(symbol)}
+
+
+async def _performance(symbol: str) -> dict[str, Any]:
+    try:
+        return await performance_for(research_db, symbol)
+    except Exception:  # noqa: BLE001  research storage trouble must not break the live page
+        return {"tested": False, "note": "Tested history is unavailable right now.", "overall": None}
 
 
 @router.get("/stocks-meta")
 async def stocks_meta() -> dict[str, Any]:
     """Names and sectors for the filters. Static: no market data."""
     return {"label": LABEL, "sectors": sectors(), "stocks": [{"symbol": s, "name": name_of(s), "sector": sector_of(s)} for s in sorted(premium_market.symbols("stock"))]}
+
+
+# ------------------------------------------------------------------ compare
+@router.get("/stocks/compare")
+async def compare(symbols: str = Query(..., description="2 to 4 stock symbols, comma separated"), interval: int = Query(default=1440)) -> dict[str, Any]:
+    """Side by side: quote, engine bias and a price series rebased to 100 at the start of the shown window."""
+    wanted = [s.strip().upper() for s in symbols.split(",") if s.strip()]
+    wanted = list(dict.fromkeys(wanted))
+    universe = set(premium_market.symbols("stock"))
+    if not 2 <= len(wanted) <= 4 or interval not in INTERVALS or any(s not in universe for s in wanted):
+        raise HTTPException(status_code=422, detail="Choose 2 to 4 supported stocks and a valid timeframe.")
+    await premium_market.ensure_quotes()
+    rows, window = [], 0
+    analyses = {s: await _analyse(s, interval) for s in wanted}
+    window = min((len(a["candles"]) for a in analyses.values() if a["candles"]), default=0)
+    for s in wanted:
+        a = analyses[s]
+        market = _market_for(s)
+        closes = [c["close"] for c in a["candles"][-window:]] if window else []
+        rebased = [round(c / closes[0] * 100, 2) for c in closes] if closes and closes[0] else []
+        eng = stock_signal(a, market, interval)
+        rows.append({"symbol": s, "name": name_of(s), "sector": sector_of(s), "quote": premium_market.public_quote(s), "market": market,
+                     "bias": eng["bias"], "score": eng["score"], "data_status": eng["data"]["status"], "trend": a["trend"]["label"], "rsi": a["signal"].get("rsi"),
+                     "volatility": eng["volatility"], "relative_volume": (a.get("volume") or {}).get("relative"),
+                     "change_over_window_pct": round(rebased[-1] - 100, 2) if rebased else None, "series": rebased, "times": [c["time"] for c in a["candles"][-window:]] if window else []})
+    return {"label": LABEL, "interval": interval, "window_candles": window, "stocks": rows,
+            "note": "Each line is rebased to 100 at the start of the window so stocks with different prices can be compared. Past performance does not predict future results."}
+
+
+# ------------------------------------------------------------------ per-user watchlists and chart layouts
+@router.get("/me/watchlists")
+async def my_watchlists(user: dict[str, Any] = Depends(require_premium)) -> dict[str, Any]:
+    return {"watchlists": await userdata.get_lists(db, userdata.owner_key(user)), "max_lists": userdata.MAX_LISTS}
+
+
+@router.put("/me/watchlists/{name}")
+async def save_watchlist(name: str, symbols: list[str] = Body(..., embed=True), user: dict[str, Any] = Depends(require_premium)) -> dict[str, Any]:
+    return {"watchlists": await userdata.put_list(db, userdata.owner_key(user), name, symbols, set(premium_market.symbols("stock")))}
+
+
+@router.delete("/me/watchlists/{name}")
+async def remove_watchlist(name: str, user: dict[str, Any] = Depends(require_premium)) -> dict[str, Any]:
+    return {"watchlists": await userdata.delete_list(db, userdata.owner_key(user), name)}
+
+
+@router.get("/me/layouts")
+async def my_layouts(user: dict[str, Any] = Depends(require_premium)) -> dict[str, Any]:
+    return {"layouts": await userdata.get_layouts(db, userdata.owner_key(user)), "max_layouts": userdata.MAX_LAYOUTS}
+
+
+@router.put("/me/layouts/{name}")
+async def save_layout(name: str, layout: dict[str, Any] = Body(...), user: dict[str, Any] = Depends(require_premium)) -> dict[str, Any]:
+    return {"layouts": await userdata.put_layout(db, userdata.owner_key(user), name, layout)}
+
+
+@router.delete("/me/layouts/{name}")
+async def remove_layout(name: str, user: dict[str, Any] = Depends(require_premium)) -> dict[str, Any]:
+    return {"layouts": await userdata.delete_layout(db, userdata.owner_key(user), name)}
