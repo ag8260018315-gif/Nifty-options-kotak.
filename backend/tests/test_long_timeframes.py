@@ -148,3 +148,37 @@ def test_api_says_when_no_history_is_stored_instead_of_inventing_it(api):
         a = api.client.get(f"/api/premium/index/{symbol}?interval=1440", headers=owner).json()["analysis"]
         assert a["history_available"] is False and a["candles"] == [] and a["signal"]["action"] == "BUILDING"
         assert "history import" in a["signal"]["reasons"][0]
+
+
+def _recent_weekdays(n):
+    from datetime import date
+
+    day, out = date.today() - timedelta(days=1), []
+    while len(out) < n:
+        if day.weekday() < 5:
+            out.append(day)
+        day -= timedelta(days=1)
+    return sorted(out)
+
+
+def test_days_after_the_import_are_filled_from_recorded_candles(api):
+    """History ends 3 sessions ago; the app recorded the sessions since, so the daily and weekly charts must include them."""
+    import routers.premium_market as rpm
+    from lib.candles import candle_store
+
+    days = _recent_weekdays(3)
+    hist_day = datetime(days[0].year, days[0].month, days[0].day, tzinfo=IST)
+    older = [bar(int((hist_day - timedelta(days=k)).timestamp()), 22000 - k, 22010 - k, 21990 - k, 22005 - k, 0) for k in range(1, 80)]
+    asyncio.run(history.merge_save(rpm.db, "NIFTY", "1d", older + [bar(int(hist_day.timestamp()), 22100, 22110, 22090, 22105, 0)]))
+    # the app recorded two later sessions in index_candles (1-minute candles)
+    col = candle_store._collection_override
+    for n, d in enumerate(days[1:]):
+        t0 = int(datetime(d.year, d.month, d.day, 9, 15, tzinfo=IST).timestamp())
+        for k in range(10):
+            asyncio.run(col.insert_one({"symbol": "NIFTY", "trading_day": d.isoformat(), "time": t0 + 60 * k, "open": 23000 + n, "high": 23010 + n, "low": 22990 + n, "close": 23005 + n, "ticks": 3}))
+    rpm._history_cache.clear()
+    a = api.client.get("/api/premium/index/NIFTY?interval=1440", headers=api.cookie("paid@example.com")).json()["analysis"]
+    times = {c["time"] for c in a["candles"]}
+    for d in days[1:]:
+        assert int(datetime(d.year, d.month, d.day, tzinfo=IST).timestamp()) in times, d
+    assert a["candles"][-1]["close"] in (23005, 23006)  # the recorded sessions are the latest candles

@@ -17,7 +17,7 @@ import asyncio
 from premium import history as index_history
 from premium import news
 from premium.analysis import MIN_BARS, analyse, resample_ohlcv
-from premium.timeframes import DAY, LONG_FRAMES, build_long_bars
+from premium.timeframes import DAY, LONG_FRAMES, build_long_bars, day_start, to_daily
 from research import stock_history
 from premium.breakout import breakout_setup
 from premium.market import IST, market_state, premium_market
@@ -147,10 +147,39 @@ async def _history(symbol: str) -> tuple[list[dict[str, Any]], list[dict[str, An
         else:
             for _day, bars in await stock_history.load_symbol(research_db, symbol):
                 fine.extend(bars)
+        if fine or daily:
+            extra = await _gap_bars(symbol, max(b["time"] for b in (fine + daily)))
+            if extra:
+                fine = fine + extra
+                if daily:
+                    daily = daily + to_daily(extra)
     except Exception:  # noqa: BLE001  a storage problem must not break the live chart
         fine, daily = [], []
-    _history_cache[symbol] = (time.monotonic(), (fine, daily))
+    if fine or daily:  # an empty result is not cached, so a fresh import shows up at once
+        _history_cache[symbol] = (time.monotonic(), (fine, daily))
     return fine, daily
+
+
+MAX_GAP_DAYS = 20
+
+
+async def _gap_bars(symbol: str, last_time: int) -> list[dict[str, Any]]:
+    """1-minute candles the app itself recorded for the sessions AFTER the stored history ends and BEFORE today, so a chart stays
+    continuous between history imports. Weekends are skipped; at most MAX_GAP_DAYS days are looked at."""
+    today = datetime.now(timezone.utc).astimezone(IST).date()
+    day = datetime.fromtimestamp(day_start(last_time) + 3600, IST).date() + timedelta(days=1)
+    extra: list[dict[str, Any]] = []
+    looked = 0
+    while day < today and looked < MAX_GAP_DAYS:
+        looked += 1
+        if day.weekday() < 5:
+            if symbol in NIFTY_INDICES:
+                bars = [{**c, "volume": 0} for c in (await candle_store.get(symbol, 1, day))["candles"]]
+            else:
+                bars = await premium_market.bars_for_day(symbol, day.isoformat())
+            extra.extend(bars)
+        day += timedelta(days=1)
+    return extra
 
 
 async def _analyse_long(symbol: str, minutes: int, include_series: bool = True) -> dict[str, Any]:
