@@ -19,11 +19,20 @@ from lib.settings import settings
 logger = logging.getLogger(__name__)
 
 DEFAULT_STOCKS = [
+    # Nifty 50 style large caps
     "RELIANCE", "TCS", "HDFCBANK", "ICICIBANK", "INFY", "HINDUNILVR", "ITC", "SBIN", "BHARTIARTL", "KOTAKBANK", "LT", "AXISBANK",
     "ASIANPAINT", "MARUTI", "SUNPHARMA", "TITAN", "ULTRACEMCO", "BAJFINANCE", "NESTLEIND", "WIPRO", "HCLTECH", "NTPC", "POWERGRID",
     "ONGC", "TATASTEEL", "M&M", "TECHM", "JSWSTEEL", "ADANIENT", "ADANIPORTS", "COALINDIA", "BAJAJFINSV", "DRREDDY", "CIPLA",
     "GRASIM", "HINDALCO", "BRITANNIA", "EICHERMOT", "APOLLOHOSP", "BPCL", "TATAMOTORS", "INDUSINDBK", "HEROMOTOCO", "DIVISLAB",
-    "SBILIFE", "HDFCLIFE", "TRENT", "BEL", "SHRIRAMFIN",
+    "SBILIFE", "HDFCLIFE", "TRENT", "BEL", "SHRIRAMFIN", "BAJAJ-AUTO", "TATACONSUM",
+    # Nifty Next 50 style
+    "ADANIGREEN", "ADANIPOWER", "AMBUJACEM", "BANKBARODA", "BERGEPAINT", "BOSCHLTD", "CANBK", "CHOLAFIN", "COLPAL", "DLF", "DABUR",
+    "GAIL", "GODREJCP", "HAVELLS", "ICICIGI", "ICICIPRULI", "INDIGO", "IOC", "IRCTC", "JINDALSTEL", "LICI", "LUPIN", "MARICO",
+    "MUTHOOTFIN", "NAUKRI", "PFC", "PIDILITIND", "PNB", "RECLTD", "SIEMENS", "SRF", "TATAPOWER", "TORNTPHARM", "UNIONBANK", "VEDL",
+    "ZYDUSLIFE", "HAL", "BHEL", "IDFCFIRSTB", "YESBANK", "MAXHEALTH", "POLYCAB", "ABB", "TVSMOTOR", "CGPOWER", "PERSISTENT", "LTIM",
+    "MPHASIS", "COFORGE", "PAGEIND", "ASHOKLEY", "BALKRISIND", "BANDHANBNK", "FEDERALBNK", "AUBANK", "IDEA", "NMDC", "SAIL", "NHPC",
+    "OFSS", "INDHOTEL", "JUBLFOOD", "MRF", "UPL", "ACC", "ALKEM", "AUROPHARMA", "BIOCON", "CUMMINSIND", "GMRAIRPORT", "HINDPETRO",
+    "IGL", "LODHA", "OBEROIRLTY", "PETRONET", "PIIND", "TIINDIA", "VOLTAS",
 ]
 INDEX_NAMES = {"NIFTY": "NIFTY 50", "BANKNIFTY": "BANK NIFTY", "FINNIFTY": "FIN NIFTY", "SENSEX": "SENSEX"}
 
@@ -32,6 +41,15 @@ def stock_symbols() -> list[str]:
     raw = os.environ.get("PREMIUM_STOCKS", "")
     items = [s.strip().upper() for s in raw.split(",") if s.strip()]
     return items or list(DEFAULT_STOCKS)
+
+
+def static_universe() -> tuple[dict[str, str], dict[str, str]]:
+    """(names, kinds) for every premium instrument, known without any feed or login, so lists are never empty."""
+    names = {sym: name for sym, name in INDEX_NAMES.items()}
+    kinds = {sym: "index" for sym in INDEX_NAMES}
+    for sym in stock_symbols():
+        names[sym], kinds[sym] = sym, "stock"
+    return names, kinds
 
 
 @dataclass

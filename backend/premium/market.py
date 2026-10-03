@@ -15,6 +15,7 @@ IST = ZoneInfo("Asia/Kolkata")
 OPEN_T, CLOSE_T = dtime(9, 15), dtime(15, 30)
 FRESH_SECONDS = 15  # a tick older than this during market hours means the data is delayed
 COLLECTION = "premium_candles"
+QUOTES_COLLECTION = "premium_quotes"
 FLUSH_SECONDS = 20
 
 
@@ -53,6 +54,9 @@ class PremiumMarket:
         self._prev_cache: dict[tuple[str, str], dict[str, float] | None] = {}
         self._last_flush = 0.0
         self.collection_override: Any | None = None  # tests inject a fake collection
+        self.quotes_override: Any | None = None
+        self._quote_dirty: set[str] = set()
+        self._quotes_restored = False
         self.subscription_error: str | None = None
         self.subscribed = False
         self.quick_drops = 0  # socket drops right after the premium subscription (circuit breaker input)
@@ -78,17 +82,29 @@ class PremiumMarket:
 
     # ------------------------------------------------------------------ setup
     def configure(self, symbol_by_key: dict[str, str], names: dict[str, str], kinds: dict[str, str]) -> None:
-        self.symbol_by_key, self.names, self.kinds = dict(symbol_by_key), dict(names), dict(kinds)
+        self.symbol_by_key = dict(symbol_by_key)
+        self.names.update(names)  # merge: instruments the feed could not resolve stay listed (without prices)
+        self.kinds.update(kinds)
+
+    def configure_static(self) -> None:
+        """Make the instrument list known before any feed connects (market closed, restart, no login yet)."""
+        from premium.universe import static_universe
+
+        names, kinds = static_universe()
+        for sym in kinds:
+            self.names.setdefault(sym, names[sym])
+            self.kinds.setdefault(sym, kinds[sym])
 
     def symbols(self, kind: str | None = None) -> list[str]:
         return [s for s, k in self.kinds.items() if kind is None or k == kind]
 
-    def _col(self) -> Any:
-        if self.collection_override is not None:
-            return self.collection_override
+    def _col(self, name: str = COLLECTION) -> Any:
+        override = self.quotes_override if name == QUOTES_COLLECTION else self.collection_override
+        if override is not None:
+            return override
         from lib.db import db  # lazy: no import-time database dependency
 
-        return db[COLLECTION]
+        return db[name]
 
     # ------------------------------------------------------------------ ingest
     def symbol_for(self, tick: dict[str, Any]) -> str | None:
@@ -116,6 +132,7 @@ class PremiumMarket:
         quote["change"] = tick["change"] if tick.get("change") is not None else (round(ltp - pc, 2) if pc else None)
         quote["change_pct"] = tick["change_pct"] if tick.get("change_pct") is not None else (round((ltp - pc) / pc * 100, 2) if pc else None)
         self.quotes[symbol] = quote
+        self._quote_dirty.add(symbol)
         if market_hours(now):
             self._add_to_candle(symbol, ltp, tick.get("volume"), now)
 
@@ -146,6 +163,15 @@ class PremiumMarket:
         if not force and _time.monotonic() - self._last_flush < FLUSH_SECONDS:
             return
         self._last_flush = _time.monotonic()
+        if self._quote_dirty:
+            symbols, self._quote_dirty = list(self._quote_dirty), set()
+            try:
+                for symbol in symbols:
+                    q = {k: v for k, v in self.quotes[symbol].items() if not k.startswith("_")}
+                    await self._col(QUOTES_COLLECTION).replace_one({"_id": symbol}, {"_id": symbol, **q}, upsert=True)
+            except Exception as exc:  # noqa: BLE001
+                self._quote_dirty |= set(symbols)
+                logger.warning("PREMIUM_QUOTES_FLUSH_ERROR kind=%s", type(exc).__name__)
         for symbol, minutes in list(self._dirty.items()):
             if not minutes:
                 continue
@@ -160,6 +186,26 @@ class PremiumMarket:
                 self._dirty[symbol] |= set(todo)
                 logger.warning("PREMIUM_FLUSH_ERROR kind=%s", type(exc).__name__)
                 return
+
+    async def ensure_quotes(self) -> None:
+        """Load the last saved quotes once, so after hours (or after a restart) the page shows the last received prices."""
+        if self._quotes_restored:
+            return
+        self._quotes_restored = True
+        try:
+            docs = await self._col(QUOTES_COLLECTION).find({}, {"_id": 0}).to_list(2000)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("PREMIUM_QUOTES_RESTORE_ERROR kind=%s", type(exc).__name__)
+            return
+        for d in docs:
+            symbol = d.get("symbol")
+            if symbol in self.quotes or not symbol or not d.get("ltp"):
+                continue  # a live tick always wins over a stored one
+            try:
+                stamp = datetime.fromisoformat(d["updated_at"])
+            except (KeyError, ValueError):
+                continue
+            self.quotes[symbol] = {**d, "_ts": stamp}
 
     async def _restore(self, symbol: str, day: str) -> None:
         if (symbol, day) in self._loaded:

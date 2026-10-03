@@ -32,6 +32,9 @@ def api(monkeypatch):
 
     monkeypatch.setattr(candle_store, "_collection_override", db["index_candles"])
     monkeypatch.setattr(premium_market, "collection_override", db["premium_candles"])
+    monkeypatch.setattr(premium_market, "quotes_override", db["premium_quotes"])
+    monkeypatch.setattr(premium_market, "_quotes_restored", False)
+    premium_market.quotes.clear()
     rpm._prev_cache.clear()
     rpm._quick_cache.clear()
     premium._cache.clear()
@@ -170,13 +173,14 @@ def test_sensex_matched_by_name_and_change_computed():
 
 async def test_persistence_and_previous_session_levels():
     m = PremiumMarket()
-    m.collection_override = AsyncMongoMockClient()["t"]["premium_candles"]
+    _db = AsyncMongoMockClient()["t"]
+    m.collection_override, m.quotes_override = _db["premium_candles"], _db["premium_quotes"]
     m.configure({"nse_cm|1": "TCS"}, {"TCS": "TCS"}, {"TCS": "stock"})
     for minute, price in enumerate([100, 105, 98, 102]):
         m.on_tick(tick("nse_cm|1", price, 1000 * (minute + 1)), at(10, minute, 5, day=2))
     await m.flush(force=True)
     fresh = PremiumMarket()
-    fresh.collection_override = m.collection_override
+    fresh.collection_override, fresh.quotes_override = m.collection_override, m.quotes_override
     prev = await fresh.previous_session("TCS", at(10, 0, day=3))
     assert prev == {"high": 105, "low": 98, "close": 102}
     assert await fresh.previous_session("TCS", at(10, 0, day=2)) is None  # nothing earlier than that day
@@ -227,8 +231,9 @@ def test_premium_user_sees_stock_rows_with_real_ticks_only(api):
     now = datetime.now(timezone.utc)
     premium_market.on_tick(tick("nse_cm|1", 4000.0, 100, close=3950.0), now)
     j = api.client.get("/api/premium/stocks", headers=api.cookie("paid@example.com")).json()
-    assert j["count"] == 1 and j["stocks"][0]["quote"]["ltp"] == 4000.0 and j["stocks"][0]["quote"]["change"] == 50.0
-    assert j["stocks"][0]["signal"]["action"] == "BUILDING"  # a single tick is not enough for any signal
+    row = next(r for r in j["stocks"] if r["symbol"] == "TCS")
+    assert j["count"] == 1 and row["quote"]["ltp"] == 4000.0 and row["quote"]["change"] == 50.0
+    assert row["signal"]["action"] == "BUILDING"  # a single tick is not enough for any signal
     assert api.client.get("/api/premium/stock/NOPE", headers=api.cookie("paid@example.com")).status_code == 404
     assert api.client.get("/api/premium/stocks", headers=api.cookie("viewer@example.com")).status_code == 403
 
@@ -267,3 +272,56 @@ async def test_feed_off_switch_builds_an_empty_plan(monkeypatch):
     monkeypatch.setenv("PREMIUM_FEED", "off")
     plan = await build_plan()
     assert plan.index_tokens == [] and plan.scrip_tokens == [] and "off" in plan.error
+
+
+def test_stock_list_exists_before_any_feed_and_shows_no_invented_prices(api):
+    """The reported bug: with the market closed and no feed, the page said 'No stock list is configured'."""
+    j = api.client.get("/api/premium/stocks", headers=api.cookie("owner@example.com")).json()
+    assert j["configured"] >= 100 and j["count"] == 0
+    assert all(r["quote"] is None for r in j["stocks"]) and {"RELIANCE", "TCS", "M&M"} <= {r["symbol"] for r in j["stocks"]}
+    assert api.client.get("/api/premium/stock/M%26M", headers=api.cookie("owner@example.com")).status_code == 200
+
+
+async def test_last_prices_survive_a_restart():
+    m = PremiumMarket()
+    db = AsyncMongoMockClient()["t"]
+    m.collection_override, m.quotes_override = db["c"], db["q"]
+    m.configure({"nse_cm|1": "TCS"}, {"TCS": "TCS"}, {"TCS": "stock"})
+    m.on_tick(tick("nse_cm|1", 4000.0, 100, close=3950.0), at(15, 20))
+    await m.flush(force=True)
+    fresh = PremiumMarket()
+    fresh.collection_override, fresh.quotes_override = db["c"], db["q"]
+    await fresh.ensure_quotes()
+    q = fresh.public_quote("TCS")
+    assert q["ltp"] == 4000.0 and q["change"] == 50.0 and fresh.last_tick("TCS") is not None
+    fresh.configure({"nse_cm|1": "TCS"}, {"TCS": "TCS"}, {"TCS": "stock"})
+    fresh.on_tick(tick("nse_cm|1", 4100.0, 100), at(9, 20, day=4))
+    assert fresh.quotes["TCS"]["ltp"] == 4100.0  # a live tick replaces the stored one
+
+
+def test_breakout_endpoint_ranks_by_score_and_never_claims_a_probability(api, monkeypatch):
+    import routers.premium_market as rpm
+
+    async def fake_news(symbol, *a, **k):
+        return {"status": "ok", "provider": "Google News", "items": [{"title": f"{symbol} headline", "link": "https://example.com/x", "source": "Example", "published_at": None}]}
+
+    monkeypatch.setattr(rpm.news, "headlines", fake_news)
+    from premium.market import premium_market
+
+    premium_market.configure({"nse_cm|1": "TCS", "nse_cm|2": "INFY"}, {}, {})
+    now = datetime.now(timezone.utc)
+    premium_market.on_tick(tick("nse_cm|1", 100.0, 10, close=99.0), now)
+    premium_market.on_tick(tick("nse_cm|2", 50.0, 10, close=49.0), now)
+
+    async def fake_analysis(symbol):
+        base = {"interval": 5, "volume": {"available": True, "relative": 2.4, "buying_pressure_pct": 66}, "trend": {"label": "UPTREND"}, "vwap": 99.0}
+        res = 100.8 if symbol == "TCS" else 51.5
+        return {**base, "signal": {"action": "BUY", "score": 60, "price": 100.0 if symbol == "TCS" else 50.0, "rsi": 61.0}, "levels": {"nearest_resistance": res, "nearest_support": 98.0}}
+
+    monkeypatch.setattr(rpm, "_quick_analysis", fake_analysis)
+    j = api.client.get("/api/premium/stocks/breakouts", headers=api.cookie("paid@example.com")).json()
+    assert [r["symbol"] for r in j["stocks"]] == ["TCS"]  # INFY is 3% below resistance: not listed
+    top = j["stocks"][0]
+    assert 0 < top["setup"]["score"] <= 100 and top["news"]["items"][0]["title"] == "TCS headline" and j["accuracy"]["validated"] is False
+    assert "probab" in j["accuracy"]["note"] and "90" not in str(j)
+    assert api.client.get("/api/premium/stocks/breakouts", headers=api.cookie("viewer@example.com")).status_code == 403

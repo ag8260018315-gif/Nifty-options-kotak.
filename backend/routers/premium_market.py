@@ -10,10 +10,15 @@ from fastapi import APIRouter, HTTPException, Query
 from lib.candles import candle_store
 from lib.feed_worker import feed_worker
 from lib.settings import settings
+import asyncio
+
+from premium import news
 from premium.analysis import MIN_BARS, analyse, resample_ohlcv
+from premium.breakout import breakout_setup
 from premium.market import IST, market_state, premium_market
 from premium.universe import INDEX_NAMES
 
+premium_market.configure_static()  # the stock list exists even before the feed connects
 router = APIRouter(prefix="/premium", tags=["premium"])
 NIFTY_INDICES = ("NIFTY", "BANKNIFTY", "FINNIFTY")
 INDICES = ("NIFTY", "BANKNIFTY", "FINNIFTY", "SENSEX")
@@ -117,35 +122,70 @@ async def index_detail(symbol: str, interval: int = Query(default=1)) -> dict[st
     return {"label": LABEL, "symbol": symbol, "name": INDEX_NAMES[symbol], "quote": _clean(quote), "market": _market_for(symbol), "analysis": await _analyse(symbol, interval)}
 
 
-async def _quick(symbol: str) -> dict[str, Any]:
-    cached = _quick_cache.get(symbol)
+_full_cache: dict[str, tuple[float, dict[str, Any]]] = {}
+
+
+async def _quick_analysis(symbol: str) -> dict[str, Any]:
+    """Series-free analysis on 5-minute candles when there are enough, else 1-minute. Cached for a few seconds."""
+    cached = _full_cache.get(symbol)
     if cached and time.monotonic() - cached[0] < QUICK_TTL:
         return cached[1]
     five = await _analyse(symbol, 5, include_series=False)
     chosen = five if five["bars_closed"] >= MIN_BARS else await _analyse(symbol, 1, include_series=False)
+    _full_cache[symbol] = (time.monotonic(), chosen)
+    return chosen
+
+
+async def _quick(symbol: str) -> dict[str, Any]:
+    chosen = await _quick_analysis(symbol)
     sig = chosen["signal"]
-    row = {"action": sig["action"], "score": sig.get("score", 0), "strength": sig.get("strength"), "interval": chosen["interval"], "trend": chosen["trend"]["label"],
-           "relative_volume": (chosen.get("volume") or {}).get("relative"), "reasons": sig.get("reasons", [])[:4],
-           "nearest_support": sig.get("nearest_support"), "nearest_resistance": sig.get("nearest_resistance"), "bars_closed": chosen["bars_closed"]}
-    _quick_cache[symbol] = (time.monotonic(), row)
-    return row
+    return {"action": sig["action"], "score": sig.get("score", 0), "strength": sig.get("strength"), "interval": chosen["interval"], "trend": chosen["trend"]["label"],
+            "relative_volume": (chosen.get("volume") or {}).get("relative"), "reasons": sig.get("reasons", [])[:4],
+            "nearest_support": sig.get("nearest_support"), "nearest_resistance": sig.get("nearest_resistance"), "bars_closed": chosen["bars_closed"]}
 
 
 @router.get("/stocks")
 async def stocks() -> dict[str, Any]:
+    """Every configured stock. A stock with no price yet (market closed before any tick) is listed with quote null."""
+    await premium_market.ensure_quotes()
     rows = []
+    for symbol in sorted(premium_market.symbols("stock")):
+        quote = premium_market.public_quote(symbol)
+        signal = await _quick(symbol) if quote is not None else {"action": "BUILDING", "score": 0, "strength": None, "interval": 1, "trend": "BUILDING", "relative_volume": None, "reasons": [], "nearest_support": None, "nearest_resistance": None, "bars_closed": 0}
+        rows.append({"symbol": symbol, "quote": quote, "signal": signal})
+    market = market_state(datetime.now(timezone.utc), premium_market.last_tick() or None) if _live() else _market_for("NIFTY")
+    return {"label": LABEL, "market": market, "count": sum(1 for r in rows if r["quote"]), "configured": len(rows), "stocks": rows}
+
+
+@router.get("/stocks/breakouts")
+async def breakouts(limit: int = Query(default=10, ge=1, le=20)) -> dict[str, Any]:
+    """Watchlist of stocks sitting just below resistance, ranked by a transparent SCORE (never a probability), with news."""
+    await premium_market.ensure_quotes()
+    ranked = []
     for symbol in premium_market.symbols("stock"):
         quote = premium_market.public_quote(symbol)
         if quote is None:
             continue
-        rows.append({"symbol": symbol, "quote": quote, "signal": await _quick(symbol)})
-    rows.sort(key=lambda r: r["symbol"])
-    return {"label": LABEL, "market": market_state(datetime.now(timezone.utc), premium_market.last_tick() or None) if _live() else _market_for("NIFTY"),
-            "count": len(rows), "configured": len(premium_market.symbols("stock")), "stocks": rows}
+        setup = breakout_setup(await _quick_analysis(symbol))
+        if setup:
+            ranked.append({"symbol": symbol, "quote": quote, "setup": setup})
+    ranked.sort(key=lambda r: (-r["setup"]["score"], r["setup"]["distance_pct"]))
+    top = ranked[:limit]
+    found = await asyncio.gather(*[news.headlines(r["symbol"]) for r in top], return_exceptions=True)
+    for row, item in zip(top, found):
+        row["news"] = item if isinstance(item, dict) else {"status": "unavailable", "provider": news.PROVIDER, "items": []}
+    return {
+        "label": LABEL, "title": "Breakout watchlist", "count": len(ranked), "stocks": top,
+        "market": market_state(datetime.now(timezone.utc), premium_market.last_tick() or None) if _live() else _market_for("NIFTY"),
+        "method": "Stocks within 2% below their nearest resistance, ranked by a 0-100 score from proximity, volume expansion, trend, momentum and VWAP.",
+        "accuracy": {"validated": False, "note": "This score is not a probability. No historical test of this rule exists yet, so no success rate is claimed."},
+        "news_note": "Headlines come from Google News and are shown as published. They are not verified by this app and may be unrelated or delayed.",
+    }
 
 
 @router.get("/stocks/opportunities")
 async def opportunities(limit: int = Query(default=8, ge=1, le=20)) -> dict[str, Any]:
+    await premium_market.ensure_quotes()
     ranked = []
     for symbol in premium_market.symbols("stock"):
         quote = premium_market.public_quote(symbol)
