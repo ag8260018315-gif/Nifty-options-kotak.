@@ -8,6 +8,12 @@ and never fed back into the rule.
 Success (default, adjustable): after the signal, a candle CLOSES above the resistance level AND price reaches +target% from the
 entry, within `horizon_minutes`, without first touching -stop% from the entry. If one candle spans both the stop and the target,
 the stop counts first (conservative). Everything else is a failure (stop hit or no follow-through).
+
+Only moments with a COMPLETE look-forward window are used (late-session moments whose window would run past the close are skipped).
+
+Comparison with chance: the same plain move test ("+target% before -stop% within the horizon", no resistance condition) is also
+measured on EVERY evaluation moment of every stock (the baseline), and on every moment a stock was near resistance whatever its
+score. The listed setups are then compared with those, using 95% Wilson ranges, so the result says whether the list beats chance.
 """
 import math
 from dataclasses import asdict, dataclass
@@ -51,38 +57,74 @@ def outcome(entry: float, resistance: float, future: list[dict[str, Any]], rule:
     return "TIMEOUT", best
 
 
-def first_setup(bars: list[dict[str, Any]], prev: dict[str, float] | None, rule: Rule) -> dict[str, Any] | None:
-    """The first moment in this session the stock would have been on the watchlist, and what followed."""
-    n = len(bars)
-    for i in range(MIN_BARS - 1, n - 1, rule.eval_step_minutes):
-        known = bars[: i + 1]
-        now = bars[i]["time"] + 60  # the evaluation moment: bar i has just closed
-        hi, lo = max(b["high"] for b in known), min(b["low"] for b in known)
-        five = analyse(resample_ohlcv(known, 5), 5, prev, now, True, hi, lo, False)
-        chosen = five if five["bars_closed"] >= MIN_BARS else analyse(known, 1, prev, now, True, hi, lo, False)
-        setup = breakout_setup(chosen)
-        if not setup:
-            continue
+def pure_outcome(entry: float, future: list[dict[str, Any]], rule: Rule) -> str:
+    """The plain move test, with no resistance condition: +target% before -stop% within the window (stop first when ambiguous)."""
+    target, stop = entry * (1 + rule.target_pct / 100), entry * (1 - rule.stop_pct / 100)
+    for bar in future:
+        if bar["low"] <= stop:
+            return "STOP"
+        if bar["high"] >= target:
+            return "SUCCESS"
+    return "TIMEOUT"
+
+
+def setup_at(bars: list[dict[str, Any]], i: int, prev: dict[str, float] | None) -> dict[str, Any] | None:
+    """What the live watchlist would have shown for this stock right after bar i closed, using only data up to bar i."""
+    known = bars[: i + 1]
+    now = bars[i]["time"] + 60  # the evaluation moment: bar i has just closed
+    hi, lo = max(b["high"] for b in known), min(b["low"] for b in known)
+    five = analyse(resample_ohlcv(known, 5), 5, prev, now, True, hi, lo, False)
+    chosen = five if five["bars_closed"] >= MIN_BARS else analyse(known, 1, prev, now, True, hi, lo, False)
+    return breakout_setup(chosen)
+
+
+def _moments(n: int, rule: Rule) -> range:
+    """Evaluation moments (index of the bar that just closed) whose look-forward window fits inside the session."""
+    return range(MIN_BARS - 1, n - 1 - rule.horizon_minutes + 1, rule.eval_step_minutes)
+
+
+def scan_session(bars: list[dict[str, Any]], prev: dict[str, float] | None, rule: Rule) -> dict[str, Any]:
+    """One session: the first listed setup and its outcome, plus the counts used for the comparison with chance."""
+    out: dict[str, Any] = {"first": None, "all_n": 0, "all_wins": 0, "near_n": 0, "near_move_wins": 0, "near_full_wins": 0}
+    for i in _moments(len(bars), rule):
         entry = bars[i]["close"]
         future = bars[i + 1 : i + 1 + rule.horizon_minutes]
-        result, best = outcome(entry, setup["resistance"], future, rule)
-        return {"time": now, "entry": round(entry, 2), "score": setup["score"], "distance_pct": setup["distance_pct"], "resistance": setup["resistance"],
-                "relative_volume": setup["relative_volume"], "result": result, "best_gain_pct": round(best, 2), "bars_after": len(future)}
-    return None
+        move = pure_outcome(entry, future, rule)
+        out["all_n"] += 1
+        out["all_wins"] += move == "SUCCESS"
+        setup = setup_at(bars, i, prev)
+        if not setup:
+            continue
+        full, best = outcome(entry, setup["resistance"], future, rule)
+        out["near_n"] += 1
+        out["near_move_wins"] += move == "SUCCESS"
+        out["near_full_wins"] += full == "SUCCESS"
+        if out["first"] is None:  # the first moment this stock would have been listed in this session
+            out["first"] = {"time": bars[i]["time"] + 60, "entry": round(entry, 2), "score": setup["score"], "distance_pct": setup["distance_pct"],
+                            "resistance": setup["resistance"], "relative_volume": setup["relative_volume"], "result": full, "move_result": move,
+                            "best_gain_pct": round(best, 2), "bars_after": len(future)}
+    return out
 
 
-def run(symbols: dict[str, list[tuple[str, list[dict[str, Any]]]]], rule: Rule) -> list[dict[str, Any]]:
-    """`symbols`: symbol -> [(trading_day, 1-minute bars)] oldest first. Returns one record per qualifying session."""
+def first_setup(bars: list[dict[str, Any]], prev: dict[str, float] | None, rule: Rule) -> dict[str, Any] | None:
+    return scan_session(bars, prev, rule)["first"]
+
+
+def run(symbols: dict[str, list[tuple[str, list[dict[str, Any]]]]], rule: Rule) -> tuple[list[dict[str, Any]], dict[str, int]]:
+    """`symbols`: symbol -> [(trading_day, 1-minute bars)] oldest first. Returns (one record per listed session, comparison counts)."""
     records: list[dict[str, Any]] = []
+    totals = {"all_n": 0, "all_wins": 0, "near_n": 0, "near_move_wins": 0, "near_full_wins": 0}
     for symbol, days in symbols.items():
         prev = None
         for day, bars in days:
             if len(bars) > MIN_BARS + rule.horizon_minutes:
-                hit = first_setup(bars, prev, rule)
-                if hit:
-                    records.append({"symbol": symbol, "day": day, **hit})
+                scan = scan_session(bars, prev, rule)
+                for key in totals:
+                    totals[key] += scan[key]
+                if scan["first"]:
+                    records.append({"symbol": symbol, "day": day, **scan["first"]})
             prev = session_levels(bars) or prev
-    return records
+    return records, totals
 
 
 def wilson(successes: int, n: int, z: float = 1.96) -> tuple[float, float]:
@@ -94,7 +136,33 @@ def wilson(successes: int, n: int, z: float = 1.96) -> tuple[float, float]:
     return max(0.0, centre - margin), min(1.0, centre + margin)
 
 
-def summarize(records: list[dict[str, Any]], rule: Rule, sessions_tested: int, symbols_tested: int) -> dict[str, Any]:
+def compare(records: list[dict[str, Any]], totals: dict[str, int]) -> dict[str, Any]:
+    """Do listed setups beat chance on the plain move test? 'BETTER' only if their 95% range lies entirely above the baseline's."""
+    n = len(records)
+    wins = sum(r.get("move_result") == "SUCCESS" for r in records)
+    lo, hi = wilson(wins, n)
+    blo, bhi = wilson(totals["all_wins"], totals["all_n"])
+    nlo, nhi = wilson(totals["near_move_wins"], totals["near_n"])
+    pct = lambda w, c: round(100 * w / c, 1) if c else None  # noqa: E731
+    if not n or not totals["all_n"]:
+        verdict, text = "UNKNOWN", "Not enough data to compare with chance."
+    elif lo > bhi:
+        verdict, text = "BETTER", "Listed stocks reached the target more often than a random stock-moment did, and the difference is larger than chance alone would explain."
+    elif hi < blo:
+        verdict, text = "WORSE", "Listed stocks reached the target LESS often than a random stock-moment did."
+    else:
+        verdict, text = "SAME", "Listed stocks cannot be told apart from a random stock-moment on this test."
+    return {
+        "test": "Plain move: price reaches the target before the stop within the window (no resistance condition), so listed and random moments are measured the same way.",
+        "listed_rate_pct": pct(wins, n), "listed_ci95_pct": [round(100 * lo, 1), round(100 * hi, 1)] if n else None, "listed_setups": n,
+        "random_moments": totals["all_n"], "random_rate_pct": pct(totals["all_wins"], totals["all_n"]), "random_ci95_pct": [round(100 * blo, 1), round(100 * bhi, 1)] if totals["all_n"] else None,
+        "near_resistance_moments": totals["near_n"], "near_resistance_rate_pct": pct(totals["near_move_wins"], totals["near_n"]),
+        "near_resistance_ci95_pct": [round(100 * nlo, 1), round(100 * nhi, 1)] if totals["near_n"] else None,
+        "verdict": verdict, "verdict_text": text,
+    }
+
+
+def summarize(records: list[dict[str, Any]], rule: Rule, sessions_tested: int, symbols_tested: int, totals: dict[str, int] | None = None) -> dict[str, Any]:
     n = len(records)
     wins = sum(r["result"] == "SUCCESS" for r in records)
     lo, hi = wilson(wins, n)
@@ -105,7 +173,9 @@ def summarize(records: list[dict[str, Any]], rule: Rule, sessions_tested: int, s
         bands.append({"band": f"{a}-{min(b, 100)}", "setups": len(sel), "hit_rate_pct": round(100 * w / len(sel), 1) if sel else None})
     days = sorted({r["day"] for r in records})
     validated = n >= MIN_SETUPS_TO_VALIDATE and sessions_tested >= MIN_SESSIONS_TO_VALIDATE
+    comparison = compare(records, totals) if totals is not None else None
     return {
+        "comparison": comparison,
         "validated": validated, "setups": n, "successes": wins, "hit_rate_pct": round(100 * wins / n, 1) if n else None,
         "ci95_low_pct": round(100 * lo, 1) if n else None, "ci95_high_pct": round(100 * hi, 1) if n else None,
         "stops": sum(r["result"] == "STOP" for r in records), "timeouts": sum(r["result"] == "TIMEOUT" for r in records),

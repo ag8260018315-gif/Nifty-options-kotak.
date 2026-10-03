@@ -172,7 +172,23 @@ export interface BreakoutRow {
   news: NewsBlock;
 }
 
+export interface Comparison {
+  test: string;
+  listed_rate_pct: number | null;
+  listed_ci95_pct: [number, number] | null;
+  listed_setups: number;
+  random_moments: number;
+  random_rate_pct: number | null;
+  random_ci95_pct: [number, number] | null;
+  near_resistance_moments: number;
+  near_resistance_rate_pct: number | null;
+  near_resistance_ci95_pct: [number, number] | null;
+  verdict: "BETTER" | "SAME" | "WORSE" | "UNKNOWN";
+  verdict_text: string;
+}
+
 export interface Backtest {
+  comparison?: Comparison | null;
   setups: number;
   successes: number;
   hit_rate_pct: number | null;

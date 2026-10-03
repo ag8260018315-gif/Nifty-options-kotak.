@@ -73,6 +73,18 @@ export default function PremiumBreakouts() {
               <p data-testid="breakout-plain-result" className="mt-2 text-slate-300">In past tests, about <span className="font-semibold text-amber-300">{Math.round(data.accuracy.backtest.hit_rate_pct)} of every 100</span> stocks that were listed met the success rule below. Treat this list as a watchlist, not a prediction.</p>
             )}
             <p className="mt-1 text-slate-500">{data.accuracy.backtest.definition}</p>
+            {data.accuracy.backtest.comparison && (() => {
+              const c = data.accuracy.backtest.comparison;
+              const color = c.verdict === "BETTER" ? "text-emerald-300" : c.verdict === "WORSE" ? "text-rose-300" : "text-amber-300";
+              return (
+                <div data-testid="breakout-comparison" className="mt-3 rounded-md border border-[#202b42] p-2.5">
+                  <p className="font-semibold text-slate-200">Compared with chance</p>
+                  <p className={`mt-1 ${color}`}>{c.verdict_text}</p>
+                  <p className="mt-1.5 text-slate-400">Reached the target before the stop: listed stocks <span className="text-slate-200">{c.listed_rate_pct ?? "—"}%</span> of {c.listed_setups}; any stock at a random moment <span className="text-slate-200">{c.random_rate_pct ?? "—"}%</span> of {c.random_moments}; stocks near resistance with any score <span className="text-slate-200">{c.near_resistance_rate_pct ?? "—"}%</span> of {c.near_resistance_moments}.</p>
+                  <p className="mt-1 text-[10px] text-slate-600">{c.test}</p>
+                </div>
+              );
+            })()}
             <p className="mt-2 flex flex-wrap gap-x-4 gap-y-1">
               {data.accuracy.backtest.by_score_band.filter((b) => b.setups > 0).map((b) => <span key={b.band}>score {b.band}: <span className="text-slate-200">{b.hit_rate_pct}%</span> of {b.setups}</span>)}
             </p>

@@ -168,7 +168,7 @@ async def _accuracy() -> dict[str, Any]:
         return base
     if not result:
         return base
-    return {**base, "validated": bool(result["validated"]), "backtest": {k: result.get(k) for k in ("setups", "successes", "hit_rate_pct", "ci95_low_pct", "ci95_high_pct", "stops", "timeouts", "sessions_tested", "symbols_tested", "period", "by_score_band", "definition", "created_at")},
+    return {**base, "validated": bool(result["validated"]), "backtest": {k: result.get(k) for k in ("comparison", "setups", "successes", "hit_rate_pct", "ci95_low_pct", "ci95_high_pct", "stops", "timeouts", "sessions_tested", "symbols_tested", "period", "by_score_band", "definition", "created_at")},
             "note": result["note"]}
 
 

@@ -150,5 +150,43 @@ async def test_run_and_store_then_router_reports_it(monkeypatch):
     await sh.save_days(db, "TCS", make_day(CLIMB + [CLIMB[-1] + j * 0.12 for j in range(1, 41)]), "upstox")
     result = await bv.run_and_store(db, bt.Rule())
     assert result["setups"] == 0 or result["hit_rate_pct"] is not None
+    assert result["comparison"]["random_moments"] > 0
     stored = await bv.latest(db)
     assert stored["rule"]["target_pct"] == 1.0 and "definition" in stored
+
+
+def test_pure_move_test_and_baseline_counts():
+    rule = bt.Rule(target_pct=1.0, stop_pct=0.5, horizon_minutes=10)
+    up = [{"open": 100, "high": 101.2, "low": 99.9, "close": 101.0}]
+    assert bt.pure_outcome(100.0, up, rule) == "SUCCESS"
+    assert bt.pure_outcome(100.0, [{"open": 100, "high": 100.2, "low": 99.4, "close": 99.5}], rule) == "STOP"
+    assert bt.pure_outcome(100.0, [{"open": 100, "high": 101.5, "low": 99.4, "close": 101.0}], rule) == "STOP"
+    assert bt.pure_outcome(100.0, [{"open": 100, "high": 100.3, "low": 99.9, "close": 100.1}], rule) == "TIMEOUT"
+    flat = make_day([100.0 + (i % 2) * 0.01 for i in range(120)])
+    scan = bt.scan_session(flat, PREV, bt.Rule(horizon_minutes=30))
+    assert scan["all_n"] > 0 and scan["all_wins"] == 0 and scan["near_n"] <= scan["all_n"]  # a flat stock never moves 1%
+
+
+def test_only_moments_with_a_full_window_are_used():
+    rule = bt.Rule(horizon_minutes=30, eval_step_minutes=15)
+    bars = make_day(CLIMB + [CLIMB[-1] + j * 0.12 for j in range(1, 41)])
+    assert all(i + rule.horizon_minutes < len(bars) for i in bt._moments(len(bars), rule))
+    hit = bt.first_setup(bars, PREV, rule)
+    assert hit is None or hit["bars_after"] == rule.horizon_minutes
+
+
+def test_comparison_verdicts():
+    recs = lambda w, n: [{"move_result": "SUCCESS" if i < w else "STOP"} for i in range(n)]  # noqa: E731
+    base = {"all_n": 10000, "all_wins": 1000, "near_n": 400, "near_move_wins": 40, "near_full_wins": 10}
+    assert bt.compare(recs(300, 1000), base)["verdict"] == "BETTER"           # 30% vs 10%
+    assert bt.compare(recs(10, 1000), base)["verdict"] == "WORSE"             # 1% vs 10%
+    same = bt.compare(recs(95, 1000), base)
+    assert same["verdict"] == "SAME" and "cannot be told apart" in same["verdict_text"]
+    assert bt.compare([], base)["verdict"] == "UNKNOWN"
+
+
+def test_summary_carries_the_comparison_only_when_given():
+    recs = [{"symbol": "A", "day": "2026-06-01", "score": 70, "result": "STOP", "move_result": "STOP"}] * 5
+    assert bt.summarize(recs, bt.Rule(), 5, 1)["comparison"] is None
+    totals = {"all_n": 100, "all_wins": 10, "near_n": 5, "near_move_wins": 0, "near_full_wins": 0}
+    assert bt.summarize(recs, bt.Rule(), 5, 1, totals)["comparison"]["random_rate_pct"] == 10.0
