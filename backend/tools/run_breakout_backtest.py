@@ -8,6 +8,7 @@ The result is saved to research_db (breakout_backtests) and shown on the Premium
 import argparse
 import asyncio
 import sys
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -24,7 +25,15 @@ async def main(args: argparse.Namespace) -> int:
     from lib.db import research_db
     from premium.backtest import Rule
 
-    result = await run_and_store(research_db, Rule(args.target, args.stop, args.horizon, args.step))
+    started = time.monotonic()
+
+    def progress(done: int, total: int, symbol: str) -> None:
+        elapsed = time.monotonic() - started
+        left = elapsed / done * (total - done)
+        print(f"  scored {done}/{total} stocks ({symbol}); {elapsed / 60:.1f} min so far, about {left / 60:.1f} min left", flush=True)
+
+    print("Loading saved history and scoring every stock at every checking time. This takes a while; progress is shown below.", flush=True)
+    result = await run_and_store(research_db, Rule(args.target, args.stop, args.horizon, args.step), progress)
     if result is None:
         print("No stored history yet. Run tools/import_upstox_history.py first.")
         return 1
