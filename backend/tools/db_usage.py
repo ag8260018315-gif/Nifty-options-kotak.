@@ -18,7 +18,17 @@ load_dotenv(ROOT / ".env")
 
 
 async def main() -> int:
-    from lib.db import db, research_db
+    from lib.db import client, db, research_db
+
+    print("all databases on the cluster:")
+    for name in await client.list_database_names():
+        try:
+            st = await client[name].command("dbStats", scale=1024 * 1024)
+            print(f"  {name:32s} data {st.get('dataSize', 0):8.1f} MB   on disk {st.get('storageSize', 0):8.1f} MB")
+        except Exception:  # noqa: BLE001
+            print(f"  {name:32s} (no access to its size)")
+    days = await db["market_snapshot_history"].aggregate([{"$group": {"_id": "$trading_day", "n": {"$sum": 1}}}, {"$sort": {"_id": 1}}]).to_list(100)
+    print("\nmarket_snapshot_history documents per trading day:", ", ".join(f"{d['_id']}: {d['n']:,}" for d in days) or "none")
 
     for label, handle in (("app database", db), ("research database", research_db)):
         stats = await handle.command("dbStats", scale=1024 * 1024)
