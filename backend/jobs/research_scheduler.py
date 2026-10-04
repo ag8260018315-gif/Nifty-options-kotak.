@@ -4,7 +4,7 @@ RESEARCH_AUTO_APPLY=true (default false: the owner applies a result on purpose).
 import asyncio
 import logging
 import os
-from datetime import datetime, time
+from datetime import datetime, time, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -25,6 +25,17 @@ def _int(name: str, default: int) -> int:
         return int(os.environ.get(name, default))
     except ValueError:
         return default
+
+
+async def trim_snapshots(live_db: Any, today: str, keep_days: int | None = None) -> int:
+    """Delete 5-second option-chain snapshots older than SNAPSHOT_KEEP_DAYS calendar days (default 4; 0 turns it off). They are by far
+    the biggest user of database space on a small plan; only the recent days are needed (daily export, nightly copy into research)."""
+    keep = _int("SNAPSHOT_KEEP_DAYS", 4) if keep_days is None else keep_days
+    if keep <= 0:
+        return 0
+    cutoff = (datetime.fromisoformat(today) - timedelta(days=keep)).date().isoformat()
+    result = await live_db.market_snapshot_history.delete_many({"trading_day": {"$lt": cutoff}})
+    return int(result.deleted_count)
 
 
 async def run_daily(live_db: Any, research_db: Any, now: datetime | None = None) -> dict[str, Any]:
@@ -48,6 +59,10 @@ async def run_daily(live_db: Any, research_db: Any, now: datetime | None = None)
                 save_config(EngineConfig.model_validate(report["config"]))
                 entry["config_written"] = True
         summary["symbols"][symbol] = entry
+    try:
+        summary["snapshots_trimmed"] = await trim_snapshots(live_db, day)
+    except Exception as exc:  # noqa: BLE001  housekeeping must never stop the research
+        summary["snapshots_trimmed"] = f"error {type(exc).__name__}"
     await research_db.job_state.update_one({"_id": "daily"}, {"$set": {"last_run_day": day, "summary": summary}}, upsert=True)
     logger.info("RESEARCH_DAILY %s", summary)
     return summary
