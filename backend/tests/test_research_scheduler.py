@@ -60,3 +60,15 @@ async def test_runs_research_when_enough_sessions_and_applies_only_when_asked(mo
     nifty = out["symbols"]["NIFTY"]
     assert nifty["status"] in {"OK", "NO_OOS_SIGNALS"} and await research_db.optimization_results.count_documents({}) == 1
     assert not cfg_path.exists() and "config_written" not in nifty  # not applied unless RESEARCH_AUTO_APPLY=true
+
+
+async def test_old_snapshots_are_trimmed_and_recent_ones_kept():
+    from mongomock_motor import AsyncMongoMockClient
+
+    from jobs.research_scheduler import trim_snapshots
+
+    live = AsyncMongoMockClient()["l"]
+    await live.market_snapshot_history.insert_many([{"trading_day": d} for d in ("2026-09-29", "2026-09-30", "2026-10-02", "2026-10-02", "2026-10-04")])
+    assert await trim_snapshots(live, "2026-10-04", keep_days=4) == 1          # only 2026-09-29 is older than 4 days
+    assert await live.market_snapshot_history.count_documents({}) == 4
+    assert await trim_snapshots(live, "2026-10-04", keep_days=0) == 0           # 0 switches it off
