@@ -64,7 +64,7 @@ class PremiumMarket:
         self.ticks = 0
 
     # ------------------------------------------------------------------ circuit breaker
-    QUICK_DROP_SECONDS = 45
+    QUICK_DROP_SECONDS = 180  # a silent socket is only noticed after ~45 s of silence, so "right after subscribing" has to cover that
     MAX_QUICK_DROPS = 2
 
     @property
