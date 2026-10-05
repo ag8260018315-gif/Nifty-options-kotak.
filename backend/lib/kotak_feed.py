@@ -78,6 +78,7 @@ class KotakSFeed:
         self.subscribed_option_tokens: set[str] = set()
         self.subscribed_index_tokens: set[str] = set()
         self.tick_counts: dict[str, int] = {"index": 0, "option": 0, "premium": 0}
+        self.field_samples: dict[str, dict[str, Any]] = {}  # first raw message per kind: which fields Kotak really sends (owner diagnostic)
         self._desired_options: set[str] = set()
         self._wake = asyncio.Event()
         self._ws: Any | None = None
@@ -154,6 +155,8 @@ class KotakSFeed:
             tick = self._to_tick(message)
             if tick is None:
                 continue
+            if tick["kind"] not in self.field_samples:
+                self._sample(tick["kind"], message)
             if tick["kind"] == "premium":
                 self.tick_counts["premium"] += 1
                 try:  # SENSEX / stock ticks feed the premium store only; they never touch NIFTY state
@@ -185,6 +188,20 @@ class KotakSFeed:
                 self._handler_errors += 1
                 if self._handler_errors <= 5 or self._handler_errors % 100 == 0:
                     logger.exception("SFEED_HANDLER_ERROR count=%s", self._handler_errors)
+
+    def _sample(self, kind: str, message: Any) -> None:
+        """Remember the public fields of the first raw message of each kind. Market data only; never anything from the login."""
+        fields: dict[str, Any] = {}
+        for name in dir(message):
+            if name.startswith("_"):
+                continue
+            try:
+                value = getattr(message, name)
+            except Exception:  # noqa: BLE001
+                continue
+            if not callable(value) and isinstance(value, (str, int, float, bool, type(None))):
+                fields[name] = value
+        self.field_samples[kind] = fields
 
     async def _subscriber(self, ws: Any, index_tokens: list[str]) -> None:
         if index_tokens:
