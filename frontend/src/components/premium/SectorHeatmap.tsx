@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 
+import DailySummary from "@/components/premium/DailySummary";
 import { MarketBadge } from "@/components/premium/AnalysisPanels";
 import { apiGet } from "@/lib/api";
 import { heatColor, pollMs, price, signed, tone, type SectorRow, type SectorsResponse } from "@/lib/premium";
@@ -23,6 +24,7 @@ export default function SectorHeatmap() {
   const selected = rows.find((s) => s.sector === open) ?? null;
   return (
     <div data-testid="sector-heatmap" className="space-y-4">
+      <DailySummary />
       <section className="rounded-xl border border-[#202b42] bg-[#0c0f17]/95 p-3 sm:p-4">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div className="flex items-center gap-2"><h1 className="font-heading text-base text-slate-100">Sectors</h1>{data && <MarketBadge market={data.market} />}</div>
