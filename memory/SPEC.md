@@ -143,3 +143,5 @@ The 5-second option-chain snapshots (`market_snapshot_history`, about 9,500 docu
 ## Moving an owner's data to a new email
 
 `python tools/move_owner_data.py --from OLD --to NEW [--yes]` (dry run by default) moves watchlists, chart layouts, alerts and notifications, Exchange profile/listings/conversations and any subscription to a new email. Lists and layouts merge; the new email's own entries are never overwritten. Logic in `backend/lib/owner_move.py`.
+
+The same move is available to the owner in the Access panel ("Move saved data to another email", preview first) via `POST /api/access/admin/move-data`, which runs on the server so it works when a PC cannot reach the database.

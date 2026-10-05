@@ -112,6 +112,24 @@ async def revoke_premium(body: EmailBody, owner: dict[str, Any] = Depends(access
     return await premium.revoke(body.email)
 
 
+class MoveData(BaseModel):
+    old: str = Field(min_length=3, max_length=320)
+    new: str = Field(min_length=3, max_length=320)
+    apply: bool = False
+
+
+@router.post("/admin/move-data")
+async def move_data(body: MoveData, owner: dict[str, Any] = Depends(access.require_admin)) -> dict:
+    """Owner only: move one email's saved watchlists, layouts, alerts, Exchange items and subscription to another email. Previews unless apply is true."""
+    from lib.db import db
+    from lib.owner_move import move_owner_data
+
+    old, new = access.normalize_email(body.old), access.normalize_email(body.new)
+    if not access.valid_email(old) or not access.valid_email(new) or old == new:
+        raise HTTPException(status_code=422, detail="Enter two different, valid email addresses.")
+    return {"moved": body.apply, "report": await move_owner_data(db, old, new, apply=body.apply)}
+
+
 @router.post("/premium-request")
 async def request_premium(user: dict[str, Any] = Depends(access.require_user)) -> dict:
     if not user.get("email"):
