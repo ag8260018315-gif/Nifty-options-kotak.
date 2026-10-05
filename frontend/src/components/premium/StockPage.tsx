@@ -6,6 +6,7 @@ import { MarketBadge } from "@/components/premium/AnalysisPanels";
 import Flash from "@/components/premium/Flash";
 import { PerformanceCard } from "@/components/premium/StockPanels";
 import StockNews from "@/components/premium/StockNews";
+import AlertMenu from "@/components/premium/AlertMenu";
 import WatchlistMenu from "@/components/premium/WatchlistMenu";
 import { ApiError, apiGet } from "@/lib/api";
 import { DEFAULT_EMA, INTERVAL_OPTIONS, pollMs, price, signed, tickAge, tone, validEma, whole, type Detail, type Interval } from "@/lib/premium";
@@ -29,6 +30,7 @@ function StockHeader({ detail }: { detail: Detail }) {
           </div>
         </div>
         <div className="flex items-center gap-2">
+          <AlertMenu symbol={detail.symbol} price={detail.quote?.ltp ?? null} />
           <WatchlistMenu symbol={detail.symbol} />
           <Link to={`/premium/compare?symbols=${encodeURIComponent(detail.symbol)}`} data-testid="stock-compare" className="inline-flex h-8 items-center rounded-md border border-[#26334b] px-3 text-xs text-slate-300 hover:bg-[#1a2336] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400/50">Compare</Link>
         </div>

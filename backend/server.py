@@ -19,6 +19,9 @@ from lib.access import require_user
 from lib.settings import settings
 from jobs.research_scheduler import run_forever as research_job
 from lib.premium import require_premium
+from lib import access as access_lib
+from premium import alerts
+from premium.market import premium_market
 from routers import access, ai, auth, dashboard, live_signals, premium_market as premium_routes, public, research_api, trading
 
 
@@ -30,8 +33,9 @@ async def lifespan(app: FastAPI):
     app.state.signal_task = asyncio.create_task(live_signals.runner.run()) if settings.mode == "LIVE" else None
     app.state.trade_task = asyncio.create_task(trading.trader.run()) if settings.mode == "LIVE" and trading.trader and trading.settings.mode != "OFF" else None
     app.state.research_task = asyncio.create_task(research_job(live_db, research_db))
+    app.state.alert_task = asyncio.create_task(alerts.run_forever(lambda: db, premium_market.public_quote, premium_routes._quick_analysis_summary, premium_routes.alerts_is_live, access_lib._send_mail))
     yield
-    for task in (app.state.research_task, app.state.trade_task, app.state.signal_task, app.state.feed_task):
+    for task in (app.state.alert_task, app.state.research_task, app.state.trade_task, app.state.signal_task, app.state.feed_task):
         if task:
             task.cancel()
     for task in (app.state.research_task, app.state.trade_task, app.state.signal_task):
