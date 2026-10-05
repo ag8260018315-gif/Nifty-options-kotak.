@@ -145,3 +145,7 @@ The 5-second option-chain snapshots (`market_snapshot_history`, about 9,500 docu
 `python tools/move_owner_data.py --from OLD --to NEW [--yes]` (dry run by default) moves watchlists, chart layouts, alerts and notifications, Exchange profile/listings/conversations and any subscription to a new email. Lists and layouts merge; the new email's own entries are never overwritten. Logic in `backend/lib/owner_move.py`.
 
 The same move is available to the owner in the Access panel ("Move saved data to another email", preview first) via `POST /api/access/admin/move-data`, which runs on the server so it works when a PC cannot reach the database.
+
+## Premium feed switches (Render environment)
+
+`PREMIUM_FEED=off` switches off all premium subscriptions; `PREMIUM_SENSEX=off` skips only SENSEX; `PREMIUM_STOCK_LIMIT=N` subscribes live prices for only the first N stocks (0 = none; the rest stay listed without prices). Used to find what the Kotak socket carries: on 2026-10-05 the socket went silent about a minute after subscribing SENSEX plus all stocks, while NIFTY alone stayed live.

@@ -352,3 +352,29 @@ def test_breakout_list_shows_the_backtest_only_when_one_exists(api):
     shown = api.client.get("/api/premium/stocks/breakouts", headers=path).json()["accuracy"]
     assert shown["validated"] is True and shown["backtest"]["setups"] == 2400 and shown["backtest"]["hit_rate_pct"] == 50.0 and shown["backtest"]["comparison"]["verdict"] == "BETTER"
     assert "definition" in shown["backtest"] and "promise" in shown["note"].lower()
+
+
+async def test_stock_limit_and_sensex_switches(monkeypatch):
+    from premium import universe
+
+    async def fake_get(path):
+        return {"data": {"filesPaths": ["https://x/nse_cm-v1.csv"]}}
+
+    rows = "pSymbol;,pSymbolName;,pTrdSymbol;,pGroup;\n" + "\n".join(f"{i},{s},{s}-EQ,EQ" for i, s in enumerate(["TCS", "INFY", "RELIANCE"], start=1))
+
+    async def fake_text(client, url):
+        return rows
+
+    monkeypatch.setattr(universe.kotak_client, "authenticated_get", fake_get)
+    monkeypatch.setattr(universe, "_get", fake_text)
+    monkeypatch.setattr(universe, "stock_symbols", lambda: ["TCS", "INFY", "RELIANCE"])
+    monkeypatch.setenv("PREMIUM_STOCK_LIMIT", "2")
+    monkeypatch.setenv("PREMIUM_SENSEX", "off")
+    plan = await universe.build_plan()
+    assert len(plan.scrip_tokens) == 2 and plan.index_tokens == [] and set(plan.kinds) >= {"TCS", "INFY", "RELIANCE"}   # all listed, two subscribed
+    monkeypatch.setenv("PREMIUM_STOCK_LIMIT", "0")
+    monkeypatch.setenv("PREMIUM_SENSEX", "on")
+    plan = await universe.build_plan()
+    assert plan.scrip_tokens == [] and len(plan.index_tokens) == 1
+    monkeypatch.delenv("PREMIUM_STOCK_LIMIT")
+    assert len((await universe.build_plan()).scrip_tokens) == 3
