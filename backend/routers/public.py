@@ -12,6 +12,7 @@ from typing import Any
 
 from fastapi import APIRouter
 
+from billing import plans, store as billing
 from lib import access
 from lib.candles import candle_store
 from lib.feed_worker import feed_worker
@@ -34,14 +35,11 @@ def _delay_minutes() -> int:
 
 def _price_plan() -> dict[str, Any]:
     try:
-        price = int(os.environ.get("PLAN_PRICE_INR", "189"))
-    except ValueError:
-        price = 189
-    try:
         trial_days = max(0, int(os.environ.get("TRIAL_DAYS", "7")))
     except ValueError:
         trial_days = 7
-    return {"trial_days": trial_days, "price_inr": price, "period": "month", "payments_live": False, "signups_open": access.signups_open()}
+    return {"trial_days": trial_days, "price_inr": plans.STANDARD_INR, "period": "month", "payments_live": billing.payments_live(), "signups_open": access.signups_open(),
+            "premium_intro_inr": plans.PREMIUM_INTRO_INR, "premium_inr": plans.PREMIUM_INR, "terms_version": plans.TERMS_VERSION}
 
 
 @router.get("/plan")

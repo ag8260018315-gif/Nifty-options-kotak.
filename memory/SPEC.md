@@ -129,3 +129,13 @@ The 5-second option-chain snapshots (`market_snapshot_history`, about 9,500 docu
 - Enquiries create one private thread per listing and buyer; both sides can reply. Limits: 5 live listings, 3 new listings/day, 10 new enquiries/day, 30 messages/hour, 100 messages per thread.
 - Any member can report a listing; three different reporters hide it until the owner reviews. The owner's "Review" tab shows pending and reported listings (approve / reject with note / remove).
 - Collections: `exchange_profiles`, `exchange_listings`, `exchange_threads`, `exchange_reports`.
+
+## Plans and subscriptions
+
+- **Standard**: 7-day free trial for new accounts (existing `TRIAL_DAYS`), then ₹189/month. **Premium**: pay ₹189 to upgrade and the first month of Premium is free (once per account), then ₹399/month for the whole dashboard. Constants live in `backend/billing/plans.py` only; the pages read them from the server.
+- State: `billing_subscriptions` (one document per email: plan, period start/end, cancel flag, promo_used, consent history), `billing_orders` (pending purchases with the consent given), `billing_payments` (unique payment references). A month is one calendar month in IST.
+- Access is derived on the server: `access.account_for` returns role `subscriber` while a paid period runs; `premium.status_for` counts a paid Premium period as well as an owner grant. Nothing is granted by the browser.
+- Checkout needs two explicit consents (amounts/dates, recurring monthly price) that must match the server's freshly computed terms. Money becomes access only through `billing.store.confirm_order` (owner "Money received" in the Access panel; amount must match; each payment reference is single-use). A payment gateway webhook would call the same function.
+- No gateway is connected (`payments_live` is False): renewals are requested, never auto-charged, and the pages say so. Optional env `PAYMENT_UPI_ID` / `PAYMENT_PAYEE_NAME` show payment details to buyers.
+- Users can cancel renewal (access continues to period end) and resume. Notices cover trial ending/ended, renewal soon, cancelled, lapsed and payment failed (owner marks a failed payment). `/api/billing/*` stays reachable after the trial ends so people can pay.
+- Pages: sign-in page pricing section, `/subscription`, plan banner and Upgrade button inside the dashboard.

@@ -10,7 +10,7 @@ Configuration (Render -> Environment). Nothing here is ever sent to the browser.
   SESSION_DAYS     how long a sign-in lasts, default 7.   APP_URL  link used in emails.
   SIGNUPS_OPEN     default "true": any email can sign up and gets an automatic free trial.
   TRIAL_DAYS       length of the free trial, default 7.  SIGNUP_CODES_PER_HOUR  cap for new emails, default 40.
-Roles: admin (owner), viewer (approved, no expiry), trial (free trial running), expired (trial over).
+Roles: admin (owner), viewer (approved, no expiry), trial (free trial running), subscriber (a paid plan is running), expired (trial over).
 """
 import asyncio
 import hashlib
@@ -159,9 +159,12 @@ async def account_for(email: str) -> dict[str, Any] | None:
     if email in _email_set("ALLOWED_EMAILS") or (await _load_db_users()).get(email):
         return {"role": "viewer", "trial_ends_at": None}
     ends_at = await _trial_end(email)
+    from billing import store as billing  # paid plans: a running paid period keeps the account open after (or without) a trial
+
+    paid = (await billing.entitlement(email))["standard"]
     if ends_at is None:
-        return None
-    return {"role": "trial" if ends_at > time.time() else "expired", "trial_ends_at": ends_at}
+        return {"role": "subscriber", "trial_ends_at": None} if paid else None
+    return {"role": "subscriber" if paid else "trial" if ends_at > time.time() else "expired", "trial_ends_at": ends_at}
 
 
 async def role_for(email: str) -> str | None:
@@ -286,7 +289,7 @@ async def request_access(email: str, name: str | None, note: str | None) -> dict
     email = normalize_email(email)
     if not valid_email(email):
         raise HTTPException(status_code=422, detail="Enter a valid email address.")
-    if await role_for(email) in {"admin", "viewer", "trial"}:
+    if await role_for(email) in {"admin", "viewer", "trial", "subscriber"}:
         return {"status": "approved"}
     requests_col = _collection("access_requests")
     if await requests_col.find_one({"_id": email}):
@@ -415,6 +418,16 @@ async def require_user(request: Request) -> dict[str, Any]:
         raise HTTPException(status_code=401, detail="Sign in to continue.")
     if user["role"] == "expired":
         raise HTTPException(status_code=402, detail="Your free trial has ended.")
+    return user
+
+
+async def require_account(request: Request) -> dict[str, Any]:
+    """Signed in, even if the free trial has ended. Used by the subscription pages, which an expired user must reach to pay."""
+    if not auth_required():
+        return OPEN_USER
+    user = await read_session(request.cookies.get(COOKIE_NAME))
+    if user is None:
+        raise HTTPException(status_code=401, detail="Sign in to continue.")
     return user
 
 

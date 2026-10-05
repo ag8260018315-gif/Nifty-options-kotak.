@@ -24,7 +24,7 @@ def api(monkeypatch):
     monkeypatch.setenv("AUTH_SECRET", "x" * 40)
     monkeypatch.setenv("ADMIN_EMAILS", "owner@example.com")
     db = AsyncMongoMockClient()["t"]
-    for name in ("access_users", "access_trials", "premium_access", "premium_requests", "access_codes", "access_requests"):
+    for name in ("access_users", "access_trials", "premium_access", "premium_requests", "access_codes", "access_requests", "billing_subscriptions", "billing_orders", "billing_payments"):
         monkeypatch.setitem(access._collection_override, name, db[name])
     from lib.candles import candle_store
     from premium.market import premium_market
@@ -43,6 +43,9 @@ def api(monkeypatch):
     rpm._quick_cache.clear()
     rpm._full_cache.clear()
     premium._cache.clear()
+    from billing import store as _billing
+
+    _billing._cache.clear()
     access._trial_cache.clear()
     access._db_users.clear()
     monkeypatch.setattr(access, "_db_users_loaded_at", 0.0)

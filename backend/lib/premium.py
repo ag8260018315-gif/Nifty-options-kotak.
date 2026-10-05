@@ -38,6 +38,11 @@ async def status_for(user: dict[str, Any]) -> dict[str, Any]:
         return {"premium": True, "premium_until": None}
     email = user.get("email")
     until = await premium_until(email) if email else None
+    from billing import store as billing  # a paid Premium plan counts as well as an owner grant; the later end date is shown
+
+    paid = await billing.entitlement(email) if email else {"premium": False, "until": None}
+    if paid["premium"] and paid["until"] and (not until or paid["until"] > until):
+        until = paid["until"]
     active = bool(until and until > time.time())
     return {"premium": active, "premium_until": until if active else None}
 
