@@ -83,6 +83,15 @@ def parse_equities(csv_text: str, wanted: list[str]) -> dict[str, dict[str, str]
     return found
 
 
+def stock_limit() -> int | None:
+    """PREMIUM_STOCK_LIMIT: how many stocks to subscribe for live prices (unset = all). Lets the owner find how many the Kotak socket carries."""
+    raw = os.environ.get("PREMIUM_STOCK_LIMIT", "").strip()
+    try:
+        return max(0, int(raw)) if raw else None
+    except ValueError:
+        return None
+
+
 async def build_plan() -> PremiumPlan:
     """Never raises: a premium problem must not disturb the NIFTY feed. Problems are reported in `error`."""
     plan = PremiumPlan()
@@ -90,12 +99,14 @@ async def build_plan() -> PremiumPlan:
         plan.error = "Premium feed is switched off (PREMIUM_FEED=off)."
         return plan
     sensex = os.environ.get("PREMIUM_SENSEX_SUBSCRIPTION", "bse_cm|SENSEX")
-    plan.index_tokens = [sensex]
-    plan.symbol_by_key[sensex] = "SENSEX"
-    plan.symbol_by_key[sensex.upper()] = "SENSEX"
+    if os.environ.get("PREMIUM_SENSEX", "on").lower() not in {"off", "0", "false", "no"}:
+        plan.index_tokens = [sensex]
+        plan.symbol_by_key[sensex] = "SENSEX"
+        plan.symbol_by_key[sensex.upper()] = "SENSEX"
     for sym, name in INDEX_NAMES.items():
         plan.names[sym], plan.kinds[sym] = name, "index"
     wanted = stock_symbols()
+    limit = stock_limit()
     try:
         response = await kotak_client.authenticated_get(settings.scrip_master_path)
         payload = response.get("data", response)
@@ -117,8 +128,9 @@ async def build_plan() -> PremiumPlan:
             plan.unresolved.append(sym)
             continue
         key = f"nse_cm|{info['token']}"
-        plan.scrip_tokens.append(key)
-        plan.symbol_by_key[key] = sym
+        if limit is None or len(plan.scrip_tokens) < limit:  # beyond the limit a stock is still listed, just without a live price
+            plan.scrip_tokens.append(key)
+            plan.symbol_by_key[key] = sym
         from premium.stockinfo import name_of
 
         plan.names[sym], plan.kinds[sym] = name_of(sym), "stock"
