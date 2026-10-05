@@ -149,3 +149,7 @@ The same move is available to the owner in the Access panel ("Move saved data to
 ## Premium feed switches (Render environment)
 
 `PREMIUM_FEED=off` switches off all premium subscriptions; `PREMIUM_SENSEX=off` skips only SENSEX; `PREMIUM_STOCK_LIMIT=N` subscribes live prices for only the first N stocks (0 = none; the rest stay listed without prices). Used to find what the Kotak socket carries: on 2026-10-05 the socket went silent about a minute after subscribing SENSEX plus all stocks, while NIFTY alone stayed live.
+
+## Feed field diagnostic (owner)
+
+`GET /api/market-data/feed-fields` (owner only) shows the public fields of the first raw Kotak message of each kind (index, option, premium = SENSEX/stocks) captured by the running feed, and which look like bid/ask/depth. Replaces running `tools/probe_kotak_depth.py` on a PC (which needs the Kotak login in a local .env and opens a second login).

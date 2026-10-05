@@ -378,3 +378,21 @@ async def test_stock_limit_and_sensex_switches(monkeypatch):
     assert plan.scrip_tokens == [] and len(plan.index_tokens) == 1
     monkeypatch.delenv("PREMIUM_STOCK_LIMIT")
     assert len((await universe.build_plan()).scrip_tokens) == 3
+
+
+def test_feed_fields_diagnostic_is_owner_only_and_flags_bid_ask(api, monkeypatch):
+    from types import SimpleNamespace
+
+    from lib.feed_worker import feed_worker
+    from lib.kotak_feed import KotakSFeed
+
+    msg = SimpleNamespace(ltp=100.5, volume=10, best_bid_price=100.4, total_buy_qty=5000, token="1", _hidden="x", nested=object())
+    sample = KotakSFeed.__new__(KotakSFeed)
+    sample.field_samples = {}
+    sample._sample("premium", msg)
+    assert set(sample.field_samples["premium"]) == {"ltp", "volume", "best_bid_price", "total_buy_qty", "token"}   # public scalars only
+    sample.authenticated = True
+    monkeypatch.setattr(feed_worker, "feed", sample)
+    assert api.client.get("/api/market-data/feed-fields", headers=api.cookie("viewer@example.com")).status_code == 403
+    out = api.client.get("/api/market-data/feed-fields", headers=api.cookie("owner@example.com", "admin")).json()
+    assert out["connected"] and out["kinds"]["premium"]["bid_ask_like"] == {"best_bid_price": 100.4, "total_buy_qty": 5000}

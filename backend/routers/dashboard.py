@@ -201,6 +201,18 @@ async def get_feed_status() -> FeedStatus:
     return feed_worker.status()
 
 
+@router.get("/feed-fields")
+async def get_feed_fields(owner: dict = Depends(require_admin)) -> dict:
+    """Owner only: which fields Kotak really sends on index, option and stock messages (first message of each kind), and whether any looks like bid/ask/depth."""
+    import re
+
+    feed = feed_worker.feed
+    samples = dict(feed.field_samples) if feed else {}
+    looks = re.compile(r"bid|ask|buy|sell|depth|best|qty|quantity|orders", re.I)
+    return {"connected": bool(feed and feed.authenticated), "kinds": {k: {"fields": sorted(v), "bid_ask_like": {n: v[n] for n in v if looks.search(n)}, "sample": v} for k, v in samples.items()},
+            "note": "A kind appears after its first message arrives. 'premium' means SENSEX or a stock."}
+
+
 @router.get("/alert-settings", response_model=AlertSettings)
 async def get_alert_settings() -> AlertSettings:
     return feed_worker.alert_settings
