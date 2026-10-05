@@ -120,3 +120,12 @@ The 5-second option-chain snapshots (`market_snapshot_history`, about 9,500 docu
 - The text is written by the AI provider when one is configured, but only accepted if every number in it appears in the app's own facts and it contains no advice or prediction wording. One rewrite is tried; otherwise a rules-written text is used. The card says "AI-written" or "Rules-written".
 - The recap is shared across users and cached (15 minutes while the market is open, 6 hours per market state otherwise), so it costs at most a few AI calls per day.
 - Shown at the top of the Sectors tab. The data label (LIVE / LAST SESSION / UNAVAILABLE) is carried through from the facts.
+
+## Trader's Exchange (services notice board)
+
+- Route `/exchange` (any signed-in account), API `/api/exchange/*`. Services only: courses, tools, data, mentoring. No payments, no tips/calls/signals/advice/portfolio management/promised returns.
+- Members appear by a chosen display name; emails never leave the server. Listings are held as "pending" until the owner approves; any edit goes back to pending.
+- Wording rules run on the server (banned advice/returns phrases; no links, emails, phone numbers or chat handles), and the poster must tick a confirmation box.
+- Enquiries create one private thread per listing and buyer; both sides can reply. Limits: 5 live listings, 3 new listings/day, 10 new enquiries/day, 30 messages/hour, 100 messages per thread.
+- Any member can report a listing; three different reporters hide it until the owner reviews. The owner's "Review" tab shows pending and reported listings (approve / reject with note / remove).
+- Collections: `exchange_profiles`, `exchange_listings`, `exchange_threads`, `exchange_reports`.
