@@ -139,3 +139,7 @@ The 5-second option-chain snapshots (`market_snapshot_history`, about 9,500 docu
 - No gateway is connected (`payments_live` is False): renewals are requested, never auto-charged, and the pages say so. Optional env `PAYMENT_UPI_ID` / `PAYMENT_PAYEE_NAME` show payment details to buyers.
 - Users can cancel renewal (access continues to period end) and resume. Notices cover trial ending/ended, renewal soon, cancelled, lapsed and payment failed (owner marks a failed payment). `/api/billing/*` stays reachable after the trial ends so people can pay.
 - Pages: sign-in page pricing section, `/subscription`, plan banner and Upgrade button inside the dashboard.
+
+## Moving an owner's data to a new email
+
+`python tools/move_owner_data.py --from OLD --to NEW [--yes]` (dry run by default) moves watchlists, chart layouts, alerts and notifications, Exchange profile/listings/conversations and any subscription to a new email. Lists and layouts merge; the new email's own entries are never overwritten. Logic in `backend/lib/owner_move.py`.
