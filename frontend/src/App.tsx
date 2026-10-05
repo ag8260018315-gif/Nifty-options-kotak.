@@ -1,12 +1,13 @@
 import { Link, Routes, Route } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Activity } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import AccessAdmin, { fetchPendingRequests } from "@/components/AccessAdmin";
 import Home from "@/pages/Home";
 import Exchange from "@/pages/Exchange";
 import Premium from "@/pages/Premium";
+import AboutBlurb from "@/components/AboutBlurb";
 import Subscription from "@/pages/Subscription";
 import PlanBanner from "@/components/billing/PlanBanner";
 import { fetchOrders } from "@/components/billing/PendingPayments";
@@ -37,11 +38,17 @@ async function fetchAccess(): Promise<AccessUser | null> {
 }
 
 function Splash() {
+  const [slow, setSlow] = useState(false);
+  useEffect(() => {
+    const timer = window.setTimeout(() => setSlow(true), 1500); // quick loads never show it
+    return () => window.clearTimeout(timer);
+  }, []);
   return (
-    <div data-testid="access-loading" className="flex min-h-screen items-center justify-center bg-[#080c14]">
+    <div data-testid="access-loading" className="flex min-h-screen flex-col items-center justify-center bg-[#080c14]">
       <div className="flex size-10 items-center justify-center rounded-lg bg-[#e0314b] text-white motion-safe:animate-pulse">
         <Activity className="size-5" />
       </div>
+      {slow && <AboutBlurb />}
     </div>
   );
 }
@@ -55,6 +62,7 @@ function Unreachable({ onRetry }: { onRetry: () => void }) {
         <button type="button" onClick={onRetry} className="mt-6 h-10 rounded-lg bg-[#e6ebf4] px-5 text-sm font-semibold text-[#080c14] hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#e6ebf4]/60">
           Try again
         </button>
+        <AboutBlurb />
       </div>
     </div>
   );

@@ -157,3 +157,7 @@ The same move is available to the owner in the Access panel ("Move saved data to
 ## Feed stall root cause (2026-10-05)
 
 With SENSEX + 129 stocks the websocket reader awaited `premium_market.flush()` inside its receive loop; flush made one database round trip per stock/candle, so a save could take longer than the 45 s silence watchdog and the feed was restarted about a minute after every connect. Now the reader only calls `schedule_flush()` (background task, one at a time) and flush writes in parallel chunks of 25. Raise `PREMIUM_STOCK_LIMIT` step by step to confirm.
+
+## Search engines see real content (2026-10-05)
+
+Google reported a "Soft 404" for the landing page: the first HTML was an empty `#root` and the app waits for the backend (`/api/access/me`), which can be asleep on the free host. `frontend/index.html` now carries a static summary inside `#root` (replaced when the app starts), and the loading and unreachable screens show a short `AboutBlurb` (loading one after 1.5 s) so a slow backend never leaves a blank page.
