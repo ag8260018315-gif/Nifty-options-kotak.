@@ -7,6 +7,7 @@ os.environ.setdefault("MONGO_URL", "mongodb://localhost:1")
 os.environ.setdefault("DB_NAME", "t")
 
 from lib.owner_move import move_owner_data  # noqa: E402
+from tests.test_premium import api  # noqa: E402,F401
 
 OLD, NEW = "old@gmail.com", "admin@edgedesk.in"
 
@@ -45,3 +46,24 @@ async def test_rejects_bad_input_and_keeps_existing_profile():
         await move_owner_data(db, OLD, OLD, apply=True)
     await move_owner_data(db, OLD, NEW, apply=True)
     assert (await db.exchange_profiles.find_one({"_id": NEW}))["name"] == "Chief"    # never overwritten
+
+
+def test_api_is_owner_only_previews_then_moves(api, monkeypatch):
+    import asyncio
+
+    import routers.access  # noqa: F401
+    import lib.db as ldb
+
+    db = AsyncMongoMockClient()["m"]
+    monkeypatch.setattr(ldb, "db", db)
+    asyncio.run(seed(db))
+    c = api.client
+    body = {"old": OLD, "new": NEW}
+    assert c.post("/api/access/admin/move-data", json=body, headers=api.cookie("viewer@example.com")).status_code == 403
+    owner = api.cookie("owner@example.com", "admin")
+    assert c.post("/api/access/admin/move-data", json={"old": OLD, "new": OLD}, headers=owner).status_code == 422
+    preview = c.post("/api/access/admin/move-data", json=body, headers=owner).json()
+    assert preview["moved"] is False and preview["report"]["premium_alerts.owner"] == 1
+    assert asyncio.run(db.premium_alerts.find_one({"_id": "a1"}))["owner"] == OLD
+    assert c.post("/api/access/admin/move-data", json={**body, "apply": True}, headers=owner).json()["moved"] is True
+    assert asyncio.run(db.premium_alerts.find_one({"_id": "a1"}))["owner"] == NEW
