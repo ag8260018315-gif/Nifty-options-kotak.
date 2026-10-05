@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 
+import PendingPayments from "@/components/billing/PendingPayments";
 import { ApiError, apiGet, apiPost } from "@/lib/api";
 
 export interface PendingRequest {
@@ -12,7 +13,7 @@ export interface PendingRequest {
 
 interface AccessUserRow {
   email: string;
-  role: "admin" | "viewer" | "trial" | "expired";
+  role: "admin" | "viewer" | "trial" | "subscriber" | "expired";
   source: "owner" | "render" | "approved" | "trial";
   trial_ends_at?: number | null;
 }
@@ -165,6 +166,7 @@ export default function AccessAdmin({ onClose }: { onClose: () => void }) {
             )}
           </section>
 
+          <PendingPayments />
           <section aria-labelledby="premium-title" data-testid="premium-admin">
             <h3 id="premium-title" className="text-sm font-semibold text-white">Premium access</h3>
             <p className="mt-1 text-xs text-slate-500">Premium (live SENSEX, index charts and stock analysis) is separate from the free trial. Grant it after you receive payment.</p>

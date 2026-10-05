@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Activity, LockKeyhole } from "lucide-react";
 
+import LandingPricing from "@/components/billing/LandingPricing";
 import { ApiError, apiGet, apiPost } from "@/lib/api";
 
 type Step = "email" | "code" | "request" | "requested";
@@ -49,6 +50,8 @@ interface ChartsResponse {
 interface Plan {
   trial_days: number;
   price_inr: number;
+  premium_intro_inr?: number;
+  premium_inr?: number;
   period: string;
   payments_live: boolean;
   signups_open: boolean;
@@ -97,7 +100,8 @@ const FAQ: { q: string; a: string }[] = [
   { q: "Where does the data come from?", a: "From the Kotak Neo API. The desk is independent and is not affiliated with or endorsed by Kotak Securities." },
   { q: "Are the Greeks exact?", a: "No. IV, delta, gamma, theta and vega are estimates from a Black-Scholes model using live option prices. Treat them as a guide, not as exchange figures." },
   { q: "What does the AI analyst do?", a: "Claude reads the same data shown on your dashboard and explains it in plain language. It separates what the data shows from its interpretation, and it can be wrong." },
-  { q: "What happens after the free trial?", a: "Access pauses and you can ask to continue from the same screen. Online payment isn't live yet, so nothing is charged." },
+  { q: "What happens after the free trial?", a: "Access pauses and the plans page opens. Standard is ₹189 a month. Premium costs ₹189 to upgrade with your first month of Premium free, then ₹399 a month. You see every amount and date, and agree to them, before you pay. You can cancel any time." },
+  { q: "What does Premium add?", a: "Live SENSEX, live prices and charts for 129 stocks, a page for each stock with 9 and 20 EMA and other indicators, buyer-versus-seller pressure, signals with their tested history, stock news and announcements, alerts, a sector heatmap and a daily recap." },
   { q: "Does it place trades?", a: "No. The desk is read-only. It never places, changes or cancels orders." },
   { q: "Is this investment advice?", a: "No. It's an information tool. Indicators are calculated by fixed formulas and can be misleading, so check price, liquidity and risk yourself." },
 ];
@@ -657,7 +661,7 @@ export default function Landing({ onSignedIn }: { onSignedIn: () => void }) {
             </div>
             {plan.signups_open && (
               <p data-testid="hero-price-line" className="mt-5 text-[14px] text-[#8c98ae]">
-                <span className="font-semibold text-[#e6ebf4]">{plan.trial_days} days free.</span> Then {price}/{plan.period}. No card needed to start.
+                <span className="font-semibold text-[#e6ebf4]">{plan.trial_days} days free.</span> Then {price}/{plan.period}, or Premium with live SENSEX and 129 stocks. No card needed to start.
               </p>
             )}
           </div>
@@ -743,29 +747,7 @@ export default function Landing({ onSignedIn }: { onSignedIn: () => void }) {
           </div>
         </section>
 
-        <section id="pricing" aria-labelledby="pricing-title" className="mx-auto max-w-[1280px] scroll-mt-20 px-5 pb-20 sm:px-8">
-          <div className="grid items-center gap-10 rounded-3xl border border-white/[0.08] bg-[linear-gradient(135deg,rgba(255,255,255,0.04),rgba(255,255,255,0.01))] p-7 sm:p-10 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
-            <div>
-              <h2 id="pricing-title" className="font-heading text-[clamp(2rem,4vw,3rem)] font-bold leading-tight tracking-tight">
-                {plan.trial_days} days free.<br />Then {price}/{plan.period}.
-              </h2>
-              <p className="mt-4 max-w-[46ch] text-[15px] leading-relaxed text-[#8c98ae]">
-                One plan with everything included. No card needed to start. Online payment isn't live yet, so nothing is charged. When the trial ends you can ask to continue.
-              </p>
-              <button type="button" data-testid="pricing-trial-cta" onClick={() => focusSignIn(reduced)} className="mt-7 h-12 rounded-xl bg-[#e6ebf4] px-6 text-[15px] font-semibold text-[#070a11] hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60 focus-visible:ring-offset-2 focus-visible:ring-offset-[#070a11]">
-                {plan.signups_open ? trialCta : "Request access"}
-              </button>
-            </div>
-            <ul className="grid gap-3 sm:grid-cols-2">
-              {[`${plan.trial_days}-day free trial`, "Real-time market analytics", "Option chain", "Greeks", "PCR and OI", "AI analysis", "CSV export", "NIFTY, BANKNIFTY, FINNIFTY"].map((item) => (
-                <li key={item} className="flex items-center gap-2.5 text-[15px] text-[#d5dbe6]">
-                  <svg aria-hidden="true" viewBox="0 0 16 16" className="size-4 shrink-0 text-emerald-300"><path d="M3.5 8.5l3 3 6-7" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" /></svg>
-                  {item}
-                </li>
-              ))}
-            </ul>
-          </div>
-        </section>
+        <LandingPricing plan={plan} onStart={() => focusSignIn(reduced)} />
 
         <section id="faq" aria-labelledby="faq-title" className="mx-auto max-w-[860px] scroll-mt-20 px-5 pb-20 sm:px-8">
           <h2 id="faq-title" className="font-heading text-[clamp(1.8rem,3.2vw,2.5rem)] font-semibold tracking-tight">Questions</h2>

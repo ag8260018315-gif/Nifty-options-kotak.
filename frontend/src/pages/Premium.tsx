@@ -1,5 +1,3 @@
-import { useState } from "react";
-import { useMutation } from "@tanstack/react-query";
 import { Link, useLocation, useParams } from "react-router-dom";
 import { Activity, Database, Gauge, Lock, ShieldCheck, Target } from "lucide-react";
 
@@ -9,7 +7,6 @@ import SectorHeatmap from "@/components/premium/SectorHeatmap";
 import AlertsPage from "@/components/premium/AlertsPage";
 import StockCompare from "@/components/premium/StockCompare";
 import StockPage from "@/components/premium/StockPage";
-import { apiPost } from "@/lib/api";
 import { useAlertEvents } from "@/lib/premiumData";
 
 export interface PremiumUser {
@@ -29,24 +26,14 @@ const FEATURES = [
 ];
 
 function Locked({ email }: { email: string | null }) {
-  const [sent, setSent] = useState<"requested" | "already_requested" | null>(null);
-  const ask = useMutation({
-    mutationFn: () => apiPost<{ status: "requested" | "already_requested" }>("/access/premium-request"),
-    onSuccess: (result) => setSent(result.status),
-  });
   return (
     <div data-testid="premium-locked" className="mx-auto max-w-3xl space-y-6 py-8">
       <div className="rounded-2xl border border-amber-400/25 bg-[linear-gradient(135deg,rgba(251,191,36,0.07),rgba(255,255,255,0.01))] p-6 sm:p-8">
         <div className="flex items-center gap-2 text-amber-300"><Lock className="size-4" /><span className="text-[11px] font-bold uppercase tracking-[0.2em]">Premium only</span></div>
         <h1 className="mt-3 font-heading text-2xl font-bold text-white sm:text-3xl">Unlock live indices, SENSEX and stock analysis</h1>
         <p className="mt-2 text-sm leading-relaxed text-slate-400">This section is part of the paid Premium plan. Your account{email ? ` (${email})` : ""} doesn't have Premium yet, so no premium data is loaded or shown.</p>
-        {sent ? (
-          <p data-testid="premium-request-sent" role="status" className="mt-6 rounded-lg border border-emerald-400/25 bg-emerald-400/[0.07] px-4 py-3 text-sm text-emerald-100">{sent === "requested" ? "Request sent. The owner will enable Premium for your account and you'll see it here after you refresh." : "You already asked recently. The owner has your request."}</p>
-        ) : (
-          <button type="button" data-testid="premium-request" disabled={ask.isPending} onClick={() => ask.mutate()} className="mt-6 h-11 rounded-xl bg-amber-300 px-6 text-sm font-semibold text-[#1a1203] hover:bg-amber-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-200/60 disabled:opacity-60">{ask.isPending ? "Sending…" : "Request Premium"}</button>
-        )}
-        {ask.isError && <p role="alert" className="mt-3 text-xs text-rose-300">That didn't go through. Try again shortly.</p>}
-        <p className="mt-3 text-[11px] text-slate-500">Online payment isn't live yet. Premium is switched on by the owner after your request.</p>
+        <Link to="/subscription" data-testid="premium-upgrade" className="mt-6 inline-flex h-11 items-center rounded-xl bg-amber-300 px-6 text-sm font-semibold text-[#1a1203] hover:bg-amber-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-200/60">Upgrade to Premium</Link>
+        <p className="mt-3 text-[11px] text-slate-500">Pay ₹189 today and your first month of Premium is free (once per account). After that ₹399 per month until you cancel. You'll see every amount and date before you pay.</p>
       </div>
       <ul className="grid gap-3 sm:grid-cols-2">
         {FEATURES.map((f) => (

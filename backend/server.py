@@ -22,7 +22,7 @@ from lib.premium import require_premium
 from lib import access as access_lib
 from premium import alerts
 from premium.market import premium_market
-from routers import access, ai, exchange as exchange_routes, auth, dashboard, live_signals, premium_market as premium_routes, public, research_api, trading
+from routers import access, ai, billing as billing_routes, exchange as exchange_routes, auth, dashboard, live_signals, premium_market as premium_routes, public, research_api, trading
 
 
 # Startup runs before the yield, shutdown after it. Add your own setup/teardown here.
@@ -70,6 +70,7 @@ api_router.include_router(ai.router, dependencies=signed_in)
 api_router.include_router(live_signals.router, dependencies=signed_in)
 api_router.include_router(research_api.router, dependencies=signed_in)
 api_router.include_router(trading.router, dependencies=signed_in)
+api_router.include_router(billing_routes.router)  # plans and subscriptions: reachable after the trial ends so people can pay
 api_router.include_router(exchange_routes.router, dependencies=signed_in)  # Trader's Exchange: services notice board, no payments
 # Premium data: the server verifies an active premium entitlement on EVERY route (403 otherwise).
 api_router.include_router(premium_routes.router, dependencies=[Depends(require_premium)])
