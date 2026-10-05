@@ -1,0 +1,8 @@
+User-agent: *
+Allow: /
+Disallow: /api/
+Disallow: /premium
+Disallow: /subscription
+Disallow: /exchange
+
+Sitemap: https://edgedesk.in/sitemap.xml
