@@ -18,7 +18,7 @@ import asyncio
 
 from premium import history as index_history
 from premium import userdata
-from premium import alerts, announcements, news, sectors as sector_view, sentiment
+from premium import alerts, announcements, daily_summary, news, sectors as sector_view, sentiment
 from premium.analysis import MIN_BARS, analyse, resample_ohlcv
 from premium.signal_engine import stock_signal
 from premium.stockinfo import name_of, sector_of, sectors
@@ -400,16 +400,41 @@ async def _performance(symbol: str) -> dict[str, Any]:
         return {"tested": False, "note": "Tested history is unavailable right now.", "overall": None}
 
 
-@router.get("/sectors")
-async def sector_overview() -> dict[str, Any]:
-    """How each sector is moving (equal-weight average change), advancers/decliners, signals and leaders. Same data and freshness as the stock list."""
+async def _stock_rows() -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Every stock with its quote and quick signal, plus the market state (shared by the sector view and the daily summary)."""
     await premium_market.ensure_quotes()
     symbols = sorted(premium_market.symbols("stock"))
     quotes = {s: premium_market.public_quote(s) for s in symbols}
     analyses = await _quick_all([s for s in symbols if quotes[s] is not None])
     rows = [{"symbol": s, "name": name_of(s), "sector": sector_of(s), "quote": quotes[s], "signal": _summary(analyses[s]) if quotes[s] is not None else {}} for s in symbols]
     market = market_state(datetime.now(timezone.utc), premium_market.last_tick() or None) if _live() else _market_for("NIFTY")
+    return rows, market
+
+
+@router.get("/sectors")
+async def sector_overview() -> dict[str, Any]:
+    """How each sector is moving (equal-weight average change), advancers/decliners, signals and leaders. Same data and freshness as the stock list."""
+    rows, market = await _stock_rows()
     return {"label": LABEL, "market": market, "sectors": sector_view.summarize(rows), "note": sector_view.NOTE}
+
+
+@router.get("/summary")
+async def market_summary() -> dict[str, Any]:
+    """A short recap written from the app's own numbers: by the AI when it is on and its text passes the number and advice checks, otherwise by rules."""
+    from lib import ai_service
+
+    market = market_state(datetime.now(timezone.utc), premium_market.last_tick() or None) if _live() else _market_for("NIFTY")
+
+    async def build() -> dict[str, Any]:
+        rows, mk = await _stock_rows()
+        return daily_summary.build_facts(sector_view.summarize(rows), rows, mk)
+
+    async def complete(system: str, text: str, max_tokens: int) -> str:
+        return await ai_service._complete(system, text, max_tokens, session_id="premium-summary")
+
+    day = datetime.now(timezone.utc).astimezone(IST).date().isoformat()
+    result = await daily_summary.get(build, complete if ai_service.ai_configured() else None, day, market["state"])
+    return {"label": LABEL, "market": market, **result}
 
 
 @router.get("/stocks-meta")

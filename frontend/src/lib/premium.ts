@@ -570,3 +570,24 @@ export function heatColor(pct: number | null | undefined): string {
   const alpha = 0.12 + strength * 0.55;
   return pct >= 0 ? `rgba(16,185,129,${alpha.toFixed(2)})` : `rgba(244,63,94,${alpha.toFixed(2)})`;
 }
+
+export interface MarketSummary {
+  market: MarketInfo;
+  source: "AI" | "RULES";
+  text: string;
+  generated_at: string;
+  note: string;
+  facts: {
+    data: string;
+    stocks_with_prices: number;
+    advancers: number;
+    decliners: number;
+    signals_bullish: number;
+    signals_bearish: number;
+    best_sectors: { sector: string; avg_change_pct: number }[];
+    weakest_sectors: { sector: string; avg_change_pct: number }[];
+    top_gainers: { symbol: string; change_pct: number }[];
+    top_losers: { symbol: string; change_pct: number }[];
+    volume_spikes: { symbol: string; relative_volume: number }[];
+  };
+}
