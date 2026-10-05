@@ -396,3 +396,33 @@ def test_feed_fields_diagnostic_is_owner_only_and_flags_bid_ask(api, monkeypatch
     assert api.client.get("/api/market-data/feed-fields", headers=api.cookie("viewer@example.com")).status_code == 403
     out = api.client.get("/api/market-data/feed-fields", headers=api.cookie("owner@example.com", "admin")).json()
     assert out["connected"] and out["kinds"]["premium"]["bid_ask_like"] == {"best_bid_price": 100.4, "total_buy_qty": 5000}
+
+
+async def test_saving_never_blocks_the_feed_reader_and_is_parallel():
+    import asyncio
+    import time
+
+    m = PremiumMarket()
+    keys = {f"nse_cm|{i}": f"S{i}" for i in range(60)}
+    m.configure(keys, {s: s for s in keys.values()}, {s: "stock" for s in keys.values()})
+    for key in keys:
+        m.on_tick(tick(key, 100.0, 10, close=99.0), at(10, 5))
+
+    class SlowCol:
+        calls = 0
+
+        async def replace_one(self, *a, **k):
+            await asyncio.sleep(0.1)
+            SlowCol.calls += 1
+
+        update_one = replace_one
+
+    m.collection_override = m.quotes_override = SlowCol()
+    started = time.monotonic()
+    m.schedule_flush()
+    assert time.monotonic() - started < 0.05            # the reader gets control back at once
+    assert m._flush_task is not None and not m._flush_task.done()
+    m.schedule_flush()                                  # a second call while saving does nothing
+    await m._flush_task
+    assert SlowCol.calls == 120                         # 60 quotes + 60 candles all saved
+    assert time.monotonic() - started < 2.0             # in parallel chunks, not 12 s one after another

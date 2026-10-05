@@ -153,3 +153,7 @@ The same move is available to the owner in the Access panel ("Move saved data to
 ## Feed field diagnostic (owner)
 
 `GET /api/market-data/feed-fields` (owner only) shows the public fields of the first raw Kotak message of each kind (index, option, premium = SENSEX/stocks) captured by the running feed, and which look like bid/ask/depth. Replaces running `tools/probe_kotak_depth.py` on a PC (which needs the Kotak login in a local .env and opens a second login).
+
+## Feed stall root cause (2026-10-05)
+
+With SENSEX + 129 stocks the websocket reader awaited `premium_market.flush()` inside its receive loop; flush made one database round trip per stock/candle, so a save could take longer than the 45 s silence watchdog and the feed was restarted about a minute after every connect. Now the reader only calls `schedule_flush()` (background task, one at a time) and flush writes in parallel chunks of 25. Raise `PREMIUM_STOCK_LIMIT` step by step to confirm.

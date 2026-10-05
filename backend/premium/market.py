@@ -4,11 +4,13 @@ Built only from Kotak SFeed ticks. No backfill and no synthetic data: a candle e
 arrived, so charts and indicators start when the server starts receiving ticks. Today's candles are saved to MongoDB
 (`premium_candles`) so a restart does not lose the day, and the previous session is read back for pivot levels.
 """
+import asyncio
 import logging
 import time as _time
 from datetime import date, datetime, time as dtime, timezone
 from typing import Any
 from zoneinfo import ZoneInfo
+
 
 logger = logging.getLogger(__name__)
 IST = ZoneInfo("Asia/Kolkata")
@@ -17,6 +19,7 @@ FRESH_SECONDS = 15  # a tick older than this during market hours means the data 
 COLLECTION = "premium_candles"
 QUOTES_COLLECTION = "premium_quotes"
 FLUSH_SECONDS = 20
+WRITE_PARALLEL = 25  # database writes in flight at once
 
 
 def market_hours(now: datetime) -> bool:
@@ -54,6 +57,7 @@ class PremiumMarket:
         self._prev_cache: dict[tuple[str, str], dict[str, float] | None] = {}
         self._last_session_cache: dict[str, tuple[str, tuple[str, list[dict[str, Any]]] | None]] = {}
         self._last_flush = 0.0
+        self._flush_task: asyncio.Task | None = None
         self.collection_override: Any | None = None  # tests inject a fake collection
         self.quotes_override: Any | None = None
         self._quote_dirty: set[str] = set()
@@ -160,33 +164,58 @@ class PremiumMarket:
         self._dirty.setdefault(symbol, set()).add(minute)
 
     # ------------------------------------------------------------------ persistence
+    def schedule_flush(self) -> None:
+        """Save to the database in the background. The websocket reader calls this on every tick and must NEVER wait for the database:
+        with 129 stocks a slow save used to freeze the reader, Kotak looked silent and the whole feed was restarted."""
+        if self._flush_task is not None and not self._flush_task.done():
+            return
+        if _time.monotonic() - self._last_flush < FLUSH_SECONDS:
+            return
+        try:
+            self._flush_task = asyncio.get_running_loop().create_task(self.flush())
+        except RuntimeError:  # no running loop (a plain unit test): nothing to schedule
+            self._flush_task = None
+
+    @staticmethod
+    async def _run_chunked(jobs: list[Any]) -> bool:
+        """Run database writes a few dozen at a time (parallel round trips instead of one after another). True if all succeeded."""
+        ok = True
+        for start in range(0, len(jobs), WRITE_PARALLEL):
+            results = await asyncio.gather(*jobs[start : start + WRITE_PARALLEL], return_exceptions=True)
+            ok = ok and not any(isinstance(r, BaseException) for r in results)
+        return ok
+
     async def flush(self, force: bool = False) -> None:
+        """Save quotes and candles. Writes run in parallel chunks, and callers on the feed use schedule_flush so the reader never waits."""
         if not force and _time.monotonic() - self._last_flush < FLUSH_SECONDS:
             return
         self._last_flush = _time.monotonic()
         if self._quote_dirty:
             symbols, self._quote_dirty = list(self._quote_dirty), set()
-            try:
-                for symbol in symbols:
-                    q = {k: v for k, v in self.quotes[symbol].items() if not k.startswith("_")}
-                    await self._col(QUOTES_COLLECTION).replace_one({"_id": symbol}, {"_id": symbol, **q}, upsert=True)
-            except Exception as exc:  # noqa: BLE001
+            col = self._col(QUOTES_COLLECTION)
+            jobs = []
+            for symbol in symbols:
+                q = {k: v for k, v in self.quotes[symbol].items() if not k.startswith("_")}
+                jobs.append(col.replace_one({"_id": symbol}, {"_id": symbol, **q}, upsert=True))
+            if not await self._run_chunked(jobs):
                 self._quote_dirty |= set(symbols)
-                logger.warning("PREMIUM_QUOTES_FLUSH_ERROR kind=%s", type(exc).__name__)
+                logger.warning("PREMIUM_QUOTES_FLUSH_ERROR")
+        taken: dict[str, list[int]] = {}
+        jobs = []
+        col = self._col()
         for symbol, minutes in list(self._dirty.items()):
             if not minutes:
                 continue
             todo, self._dirty[symbol] = sorted(minutes), set()
-            try:
-                col = self._col()
-                for minute in todo:
-                    bar = self.candles.get(symbol, {}).get(minute)
-                    if bar:
-                        await col.update_one({"_id": f"{symbol}:{minute}"}, {"$set": {**bar, "symbol": symbol, "trading_day": self._day[symbol]}}, upsert=True)
-            except Exception as exc:  # noqa: BLE001  storage trouble must never disturb the feed
+            taken[symbol] = todo
+            for minute in todo:
+                bar = self.candles.get(symbol, {}).get(minute)
+                if bar:
+                    jobs.append(col.update_one({"_id": f"{symbol}:{minute}"}, {"$set": {**bar, "symbol": symbol, "trading_day": self._day[symbol]}}, upsert=True))
+        if jobs and not await self._run_chunked(jobs):  # storage trouble must never disturb the feed: keep the bars for the next try
+            for symbol, todo in taken.items():
                 self._dirty[symbol] |= set(todo)
-                logger.warning("PREMIUM_FLUSH_ERROR kind=%s", type(exc).__name__)
-                return
+            logger.warning("PREMIUM_FLUSH_ERROR")
 
     async def ensure_quotes(self) -> None:
         """Load the last saved quotes once, so after hours (or after a restart) the page shows the last received prices."""
