@@ -143,6 +143,7 @@ export default function App() {
       <Route path="/premium" element={<AccessGate page="premium" />} />
       <Route path="/premium/stocks" element={<AccessGate page="premium" />} />
       <Route path="/premium/stocks/:symbol" element={<AccessGate page="premium" />} />
+      <Route path="/premium/sectors" element={<AccessGate page="premium" />} />
       <Route path="/premium/alerts" element={<AccessGate page="premium" />} />
       <Route path="/premium/compare" element={<AccessGate page="premium" />} />
     </Routes>
