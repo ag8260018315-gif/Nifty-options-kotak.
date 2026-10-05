@@ -18,7 +18,7 @@ import asyncio
 
 from premium import history as index_history
 from premium import userdata
-from premium import alerts, announcements, news, sentiment
+from premium import alerts, announcements, news, sectors as sector_view, sentiment
 from premium.analysis import MIN_BARS, analyse, resample_ohlcv
 from premium.signal_engine import stock_signal
 from premium.stockinfo import name_of, sector_of, sectors
@@ -398,6 +398,18 @@ async def _performance(symbol: str) -> dict[str, Any]:
         return await performance_for(research_db, symbol)
     except Exception:  # noqa: BLE001  research storage trouble must not break the live page
         return {"tested": False, "note": "Tested history is unavailable right now.", "overall": None}
+
+
+@router.get("/sectors")
+async def sector_overview() -> dict[str, Any]:
+    """How each sector is moving (equal-weight average change), advancers/decliners, signals and leaders. Same data and freshness as the stock list."""
+    await premium_market.ensure_quotes()
+    symbols = sorted(premium_market.symbols("stock"))
+    quotes = {s: premium_market.public_quote(s) for s in symbols}
+    analyses = await _quick_all([s for s in symbols if quotes[s] is not None])
+    rows = [{"symbol": s, "name": name_of(s), "sector": sector_of(s), "quote": quotes[s], "signal": _summary(analyses[s]) if quotes[s] is not None else {}} for s in symbols]
+    market = market_state(datetime.now(timezone.utc), premium_market.last_tick() or None) if _live() else _market_for("NIFTY")
+    return {"label": LABEL, "market": market, "sectors": sector_view.summarize(rows), "note": sector_view.NOTE}
 
 
 @router.get("/stocks-meta")

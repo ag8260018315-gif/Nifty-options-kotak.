@@ -534,3 +534,39 @@ export function alertText(rule: AlertRule): string {
   const base = ALERT_LABEL[rule.kind];
   return rule.value === null ? base : `${base} ${rule.value}`;
 }
+
+export interface SectorMember {
+  symbol: string;
+  name: string;
+  ltp: number;
+  change_pct: number;
+}
+
+export interface SectorRow {
+  sector: string;
+  stocks: number;
+  with_prices: number;
+  avg_change_pct: number | null;
+  advancers: number;
+  decliners: number;
+  bullish: number;
+  bearish: number;
+  avg_relative_volume: number | null;
+  leaders: string[];
+  laggards: string[];
+  members: SectorMember[];
+}
+
+export interface SectorsResponse {
+  market: MarketInfo;
+  sectors: SectorRow[];
+  note: string;
+}
+
+// Tile colour from a % change: stronger green or red the further from zero, grey when there is no price. Capped at +-3%.
+export function heatColor(pct: number | null | undefined): string {
+  if (pct === null || pct === undefined) return "rgba(100,116,139,0.15)";
+  const strength = Math.min(1, Math.abs(pct) / 3);
+  const alpha = 0.12 + strength * 0.55;
+  return pct >= 0 ? `rgba(16,185,129,${alpha.toFixed(2)})` : `rgba(244,63,94,${alpha.toFixed(2)})`;
+}

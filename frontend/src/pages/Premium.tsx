@@ -5,6 +5,7 @@ import { Activity, Database, Gauge, Lock, ShieldCheck, Target } from "lucide-rea
 
 import PremiumIndices from "@/components/premium/PremiumIndices";
 import PremiumStocks from "@/components/premium/PremiumStocks";
+import SectorHeatmap from "@/components/premium/SectorHeatmap";
 import AlertsPage from "@/components/premium/AlertsPage";
 import StockCompare from "@/components/premium/StockCompare";
 import StockPage from "@/components/premium/StockPage";
@@ -18,7 +19,7 @@ export interface PremiumUser {
 }
 
 // The address decides the view, so every stock and comparison has a link that can be bookmarked or shared.
-type View = "indices" | "stocks" | "stock" | "compare" | "alerts";
+type View = "indices" | "stocks" | "stock" | "compare" | "alerts" | "sectors";
 
 const FEATURES = [
   { icon: Gauge, title: "Advanced live charts", text: "SENSEX, NIFTY 50, BANK NIFTY, FIN NIFTY and every stock, from 1-minute to monthly candles, with 9/20 EMA (or your own periods), Bollinger bands, VWAP, RSI, MACD, volume, support/resistance and candlestick patterns." },
@@ -63,9 +64,9 @@ function Locked({ email }: { email: string | null }) {
 export default function Premium({ user }: { user: PremiumUser }) {
   const { symbol } = useParams<{ symbol: string }>();
   const { pathname } = useLocation();
-  const view: View = symbol ? "stock" : pathname.startsWith("/premium/alerts") ? "alerts" : pathname.startsWith("/premium/compare") ? "compare" : pathname.startsWith("/premium/stocks") ? "stocks" : "indices";
+  const view: View = symbol ? "stock" : pathname.startsWith("/premium/alerts") ? "alerts" : pathname.startsWith("/premium/sectors") ? "sectors" : pathname.startsWith("/premium/compare") ? "compare" : pathname.startsWith("/premium/stocks") ? "stocks" : "indices";
   const { unread } = useAlertEvents();
-  const activeTab = view === "indices" ? "indices" : view === "alerts" ? "alerts" : "stocks";
+  const activeTab = view === "indices" ? "indices" : view === "alerts" ? "alerts" : view === "sectors" ? "sectors" : "stocks";
   const until = user.premium_until ? new Date(user.premium_until * 1000).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric", timeZone: "Asia/Kolkata" }) : null;
   return (
     <div data-testid="premium-shell" className="min-h-svh bg-[#07090e] text-slate-100">
@@ -80,7 +81,7 @@ export default function Premium({ user }: { user: PremiumUser }) {
           </div>
           {user.premium && (
             <nav aria-label="Premium sections" className="flex items-center gap-1 rounded-lg border border-[#202b42] bg-[#0e131d] p-1">
-              {([["indices", "Indices & charts", "/premium"], ["stocks", "Stocks", "/premium/stocks"], ["alerts", "Alerts", "/premium/alerts"]] as const).map(([id, label, to]) => (
+              {([["indices", "Indices & charts", "/premium"], ["stocks", "Stocks", "/premium/stocks"], ["sectors", "Sectors", "/premium/sectors"], ["alerts", "Alerts", "/premium/alerts"]] as const).map(([id, label, to]) => (
                 <Link key={id} to={to} data-testid={`premium-tab-${id}`} aria-current={activeTab === id ? "page" : undefined} className={`rounded-md px-3.5 py-2 text-xs font-semibold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-200/60 ${activeTab === id ? "bg-amber-300 text-[#1a1203]" : "text-slate-400 hover:text-slate-200"}`}>{label}{id === "alerts" && unread > 0 && <span data-testid="alert-badge" className="ml-1.5 rounded-full bg-rose-500 px-1.5 text-[10px] font-bold text-white">{unread}</span>}</Link>
               ))}
             </nav>
@@ -92,7 +93,7 @@ export default function Premium({ user }: { user: PremiumUser }) {
         </div>
       </header>
       <main className="mx-auto max-w-[1600px] px-4 py-5 pb-24 sm:px-6">
-        {user.premium ? view === "indices" ? <PremiumIndices /> : view === "stocks" ? <PremiumStocks /> : view === "compare" ? <StockCompare /> : view === "alerts" ? <AlertsPage /> : <StockPage symbol={(symbol ?? "").toUpperCase()} /> : <Locked email={user.email} />}
+        {user.premium ? view === "indices" ? <PremiumIndices /> : view === "stocks" ? <PremiumStocks /> : view === "compare" ? <StockCompare /> : view === "alerts" ? <AlertsPage /> : view === "sectors" ? <SectorHeatmap /> : <StockPage symbol={(symbol ?? "").toUpperCase()} /> : <Locked email={user.email} />}
         {user.premium && <p className="mt-6 border-t border-[#1e2638] pt-4 text-[11px] leading-relaxed text-slate-600">Live prices come only from your Kotak Neo feed during NSE/BSE hours (09:15–15:30 IST, Mon–Fri), and every page says whether its numbers are live, from the last session, delayed or unavailable. Intraday candles build up from live ticks; longer timeframes also use imported history when the owner has loaded it. Signals, setups and tested results are informational analysis of past prices, not investment advice or a promise, and can be wrong. No orders are placed from this page.</p>}
       </main>
     </div>
