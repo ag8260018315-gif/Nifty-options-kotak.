@@ -43,7 +43,7 @@ export default function Upgrade({ email, onSignOut, onApproved }: { email: strin
       <div className="w-full max-w-[560px]">
         <div className="flex items-center gap-2.5">
           <span className="flex size-8 items-center justify-center rounded-lg bg-[#e0314b] text-white"><Activity className="size-[18px]" /></span>
-          <span className="font-heading text-[15px] font-semibold">NIFTY Options Desk</span>
+          <span className="font-heading text-[15px] font-semibold">EdgeDesk</span>
         </div>
         <div className="mt-8 rounded-3xl border border-white/[0.08] bg-[linear-gradient(135deg,rgba(255,255,255,0.045),rgba(255,255,255,0.01))] p-7 sm:p-9">
           <h1 className="font-heading text-[30px] font-bold leading-tight tracking-tight">Your free trial has ended</h1>
