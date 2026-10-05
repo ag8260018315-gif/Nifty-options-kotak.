@@ -88,6 +88,7 @@ export default function Premium({ user }: { user: PremiumUser }) {
           )}
           <div className="flex items-center gap-3 text-xs">
             {user.premium && until && <span data-testid="premium-until" className="hidden text-slate-500 sm:inline">Premium until {until}</span>}
+            <Link to="/exchange" data-testid="premium-exchange-link" className="rounded-md border border-[#26334b] px-3 py-1.5 text-slate-200 hover:bg-[#1a2336] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400/50">Trader's Exchange</Link>
             <Link to="/" data-testid="back-to-desk" className="rounded-md border border-[#26334b] px-3 py-1.5 text-slate-200 hover:bg-[#1a2336] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400/50">← Options desk</Link>
           </div>
         </div>

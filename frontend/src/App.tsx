@@ -5,6 +5,7 @@ import { useState } from "react";
 
 import AccessAdmin, { fetchPendingRequests } from "@/components/AccessAdmin";
 import Home from "@/pages/Home";
+import Exchange from "@/pages/Exchange";
 import Premium from "@/pages/Premium";
 import Landing from "@/pages/Landing";
 import Upgrade from "@/pages/Upgrade";
@@ -117,7 +118,7 @@ function ExpiredTrial({ user }: { user: AccessUser }) {
   return <Upgrade email={user.email} onSignOut={() => void signOut()} onApproved={() => void queryClient.invalidateQueries({ queryKey: ["access-me"] })} />;
 }
 
-function AccessGate({ page = "home" }: { page?: "home" | "premium" }) {
+function AccessGate({ page = "home" }: { page?: "home" | "premium" | "exchange" }) {
   const queryClient = useQueryClient();
   const access = useQuery({ queryKey: ["access-me"], queryFn: fetchAccess, refetchInterval: 60_000, retry: 1 });
 
@@ -129,7 +130,7 @@ function AccessGate({ page = "home" }: { page?: "home" | "premium" }) {
   if (access.data.role === "expired") return <ExpiredTrial user={access.data} />;
   return (
     <>
-      {page === "premium" ? <Premium user={{ email: access.data.email, premium: access.data.premium === true, premium_until: access.data.premium_until }} /> : <Home isOwner={access.data.role === "admin"} />}
+      {page === "exchange" ? <Exchange /> : page === "premium" ? <Premium user={{ email: access.data.email, premium: access.data.premium === true, premium_until: access.data.premium_until }} /> : <Home isOwner={access.data.role === "admin"} />}
       {access.data.auth_required && access.data.email && <SignedInBar user={access.data} />}
     </>
   );
@@ -140,6 +141,7 @@ export default function App() {
   return (
     <Routes>
       <Route path="/" element={<AccessGate />} />
+      <Route path="/exchange" element={<AccessGate page="exchange" />} />
       <Route path="/premium" element={<AccessGate page="premium" />} />
       <Route path="/premium/stocks" element={<AccessGate page="premium" />} />
       <Route path="/premium/stocks/:symbol" element={<AccessGate page="premium" />} />
