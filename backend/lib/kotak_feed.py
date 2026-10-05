@@ -28,6 +28,8 @@ MessageHandler = Callable[[dict[str, Any]], Awaitable[None]]
 
 IST = ZoneInfo("Asia/Kolkata")
 MAX_SUBSCRIPTIONS = 3000
+PREMIUM_BATCH = 20  # stocks per subscribe call
+PREMIUM_BATCH_PAUSE = 0.5
 STALL_SECONDS = 45  # no SDK message at all for this long during market hours => force reconnect
 WATCHDOG_INTERVAL = 10
 
@@ -210,8 +212,9 @@ class KotakSFeed:
         try:
             if plan.index_tokens:
                 await ws.subscribe_index([_ws_token(value) for value in plan.index_tokens])
-            for start in range(0, len(plan.scrip_tokens), 100):
-                await ws.subscribe_scrips([_ws_token(value) for value in plan.scrip_tokens[start : start + 100]])
+            for start in range(0, len(plan.scrip_tokens), PREMIUM_BATCH):
+                await ws.subscribe_scrips([_ws_token(value) for value in plan.scrip_tokens[start : start + PREMIUM_BATCH]])
+                await asyncio.sleep(PREMIUM_BATCH_PAUSE)  # gentle: a flood of subscriptions at once may be what makes Kotak go quiet
             premium_market.subscribed = True
             self._premium_subscribed_at = asyncio.get_running_loop().time()
             logger.info("SFEED_SUBSCRIBED kind=premium index=%s scrips=%s", len(plan.index_tokens), len(plan.scrip_tokens))
