@@ -113,3 +113,10 @@ The 5-second option-chain snapshots (`market_snapshot_history`, about 9,500 docu
 
 ### Premium update: sector heatmap and rankings
 `premium/sectors.py` + `GET /api/premium/sectors`: per sector (from `premium/stockinfo.py`) the equal-weight average day change of the stocks that have a price (no market-cap data exists, so it is not a sector index, and the page says so), advancers/decliners, bullish/bearish count from the quick signal, average relative volume, leaders and laggards, and every member. UI: Sectors tab (`/premium/sectors`), a coloured tile per sector (green/red by average change, capped at 3%), click a sector for its stocks (each links to its page), ranking table sortable by average change, breadth or relative volume. Same data freshness as the stock list; while the market is closed it reflects the last session. Tests: `tests/test_sectors.py`.
+
+## Premium update: AI market recap
+
+- `GET /api/premium/summary` (Premium only) returns a short recap of the day: breadth, strongest/weakest sectors, top movers, unusual volume and how many stocks the signal engine reads bullish/bearish.
+- The text is written by the AI provider when one is configured, but only accepted if every number in it appears in the app's own facts and it contains no advice or prediction wording. One rewrite is tried; otherwise a rules-written text is used. The card says "AI-written" or "Rules-written".
+- The recap is shared across users and cached (15 minutes while the market is open, 6 hours per market state otherwise), so it costs at most a few AI calls per day.
+- Shown at the top of the Sectors tab. The data label (LIVE / LAST SESSION / UNAVAILABLE) is carried through from the facts.
