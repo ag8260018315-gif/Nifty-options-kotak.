@@ -163,7 +163,7 @@ class KotakSFeed:
                     from premium.market import premium_market
 
                     premium_market.on_tick(tick)
-                    await premium_market.flush()
+                    premium_market.schedule_flush()  # saved in the background: the reader never waits for the database
                 except Exception:  # noqa: BLE001
                     logger.warning("PREMIUM_TICK_ERROR", exc_info=True)
                 continue
