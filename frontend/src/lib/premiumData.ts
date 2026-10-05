@@ -1,8 +1,8 @@
 import { useRef, useState } from "react";
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
-import { apiDelete, apiGet, apiPatch, apiPut } from "@/lib/api";
-import type { AnnouncementsResponse, Layout, StockNews, StocksMeta, Watchlists } from "@/lib/premium";
+import { apiDelete, apiGet, apiPatch, apiPost, apiPut } from "@/lib/api";
+import type { AlertEvent, AlertsResponse, AnnouncementsResponse, Layout, StockNews, StocksMeta, Watchlists } from "@/lib/premium";
 
 // Server-side, per-user data for the premium pages. Everything here is read and written through /api/premium/me/*,
 // which only returns the signed-in user's own watchlists and chart layouts.
@@ -127,4 +127,23 @@ export function useSessionState<T extends string>(key: string, initial: T): [T, 
     }
   };
   return [value, set];
+}
+
+const ALERTS_KEY = ["premium-alerts"];
+
+export function useAlerts() {
+  const client = useQueryClient();
+  const query = useQuery({ queryKey: ALERTS_KEY, queryFn: () => apiGet<AlertsResponse>("/premium/me/alerts"), retry: false });
+  const accept = (result: AlertsResponse) => client.setQueryData<AlertsResponse>(ALERTS_KEY, (old) => ({ ...(old ?? {}), ...result }));
+  const create = useMutation({ mutationFn: (rule: { symbol: string; kind: string; value?: number; once: boolean; email: boolean }) => apiPost<AlertsResponse>("/premium/me/alerts", rule), onSuccess: accept });
+  const toggle = useMutation({ mutationFn: ({ id, active }: { id: string; active: boolean }) => apiPatch<AlertsResponse>(`/premium/me/alerts/${id}`, { active }), onSuccess: accept });
+  const remove = useMutation({ mutationFn: (id: string) => apiDelete<AlertsResponse>(`/premium/me/alerts/${id}`), onSuccess: accept });
+  return { alerts: query.data?.alerts ?? [], max: query.data?.max_alerts ?? 30, note: query.data?.note, loading: query.isPending, failed: query.isError, busy: create.isPending || toggle.isPending || remove.isPending, error: create.error ?? toggle.error ?? remove.error, create: create.mutateAsync, toggle: toggle.mutateAsync, remove: remove.mutateAsync };
+}
+
+export function useAlertEvents() {
+  const client = useQueryClient();
+  const query = useQuery({ queryKey: ["premium-alert-events"], queryFn: () => apiGet<{ events: AlertEvent[]; unread: number }>("/premium/me/alert-events"), refetchInterval: 15_000, retry: false });
+  const read = useMutation({ mutationFn: () => apiPost("/premium/me/alert-events/read"), onSuccess: () => void client.invalidateQueries({ queryKey: ["premium-alert-events"] }) });
+  return { events: query.data?.events ?? [], unread: query.data?.unread ?? 0, markRead: read.mutate };
 }

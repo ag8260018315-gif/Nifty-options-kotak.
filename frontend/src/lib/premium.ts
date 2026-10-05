@@ -491,3 +491,46 @@ export function validEma(fast: number, slow: number): string | null {
 export function pollMs(state: MarketInfo["state"] | undefined): number {
   return state === "CLOSED" || state === "NO_FEED" ? 30_000 : 2_500;
 }
+
+export type AlertKind = "price_above" | "price_below" | "change_pct_above" | "change_pct_below" | "volume_spike" | "bias_bullish" | "bias_bearish";
+
+export interface AlertRule {
+  id: string;
+  symbol: string;
+  kind: AlertKind;
+  value: number | null;
+  once: boolean;
+  email: boolean;
+  active: boolean;
+  fired: number;
+  last_fired_at: number | null;
+}
+
+export interface AlertsResponse {
+  alerts: AlertRule[];
+  max_alerts?: number;
+  kinds?: Record<AlertKind, string>;
+  note?: string;
+}
+
+export interface AlertEvent {
+  message: string;
+  symbol: string;
+  at: number;
+  read: boolean;
+}
+
+export const ALERT_LABEL: Record<AlertKind, string> = {
+  price_above: "Price rises to or above",
+  price_below: "Price falls to or below",
+  change_pct_above: "Day change rises to or above (%)",
+  change_pct_below: "Day change falls to or below (%)",
+  volume_spike: "Relative volume reaches (x average)",
+  bias_bullish: "Signal turns Bullish",
+  bias_bearish: "Signal turns Bearish",
+};
+
+export function alertText(rule: AlertRule): string {
+  const base = ALERT_LABEL[rule.kind];
+  return rule.value === null ? base : `${base} ${rule.value}`;
+}

@@ -18,7 +18,7 @@ import asyncio
 
 from premium import history as index_history
 from premium import userdata
-from premium import announcements, news, sentiment
+from premium import alerts, announcements, news, sentiment
 from premium.analysis import MIN_BARS, analyse, resample_ohlcv
 from premium.signal_engine import stock_signal
 from premium.stockinfo import name_of, sector_of, sectors
@@ -266,6 +266,10 @@ async def _quick(symbol: str) -> dict[str, Any]:
     return _summary(await _quick_analysis(symbol))
 
 
+async def _quick_analysis_summary(symbol: str) -> dict[str, Any]:
+    return _summary(await _quick_analysis(symbol))
+
+
 async def _quick_all(symbols: list[str]) -> dict[str, dict[str, Any]]:
     """Quick analysis of many stocks at once. Each may need a database read (the last session while the market is closed), so they run
     a few at a time instead of one after the other."""
@@ -464,3 +468,44 @@ async def save_layout(name: str, layout: dict[str, Any] = Body(...), user: dict[
 @router.delete("/me/layouts/{name}")
 async def remove_layout(name: str, user: dict[str, Any] = Depends(require_premium)) -> dict[str, Any]:
     return {"layouts": await userdata.delete_layout(db, userdata.owner_key(user), name)}
+
+
+# ------------------------------------------------------------------ alerts
+def alerts_is_live(symbol: str) -> bool:
+    """Fresh live prices only: the feed is on, the market is open and this stock ticked recently."""
+    return _live() and market_state(datetime.now(timezone.utc), premium_market.last_tick(symbol))["state"] == "OPEN"
+
+
+@router.get("/me/alerts")
+async def my_alerts(user: dict[str, Any] = Depends(require_premium)) -> dict[str, Any]:
+    return {"alerts": await alerts.list_rules(db, userdata.owner_key(user)), "max_alerts": alerts.MAX_RULES, "kinds": alerts.KINDS,
+            "note": "Alerts check live prices every few seconds while the market is open. They can be late or missed if the feed or server is down. Information only."}
+
+
+@router.post("/me/alerts")
+async def create_alert(rule: dict[str, Any] = Body(...), user: dict[str, Any] = Depends(require_premium)) -> dict[str, Any]:
+    await alerts.add_rule(db, userdata.owner_key(user), rule, set(premium_market.symbols("stock")))
+    return {"alerts": await alerts.list_rules(db, userdata.owner_key(user))}
+
+
+@router.patch("/me/alerts/{rule_id}")
+async def toggle_alert(rule_id: str, active: bool = Body(..., embed=True), user: dict[str, Any] = Depends(require_premium)) -> dict[str, Any]:
+    await alerts.set_active(db, userdata.owner_key(user), rule_id, active)
+    return {"alerts": await alerts.list_rules(db, userdata.owner_key(user))}
+
+
+@router.delete("/me/alerts/{rule_id}")
+async def remove_alert(rule_id: str, user: dict[str, Any] = Depends(require_premium)) -> dict[str, Any]:
+    await alerts.delete_rule(db, userdata.owner_key(user), rule_id)
+    return {"alerts": await alerts.list_rules(db, userdata.owner_key(user))}
+
+
+@router.get("/me/alert-events")
+async def my_alert_events(user: dict[str, Any] = Depends(require_premium)) -> dict[str, Any]:
+    return await alerts.list_events(db, userdata.owner_key(user))
+
+
+@router.post("/me/alert-events/read")
+async def read_alert_events(user: dict[str, Any] = Depends(require_premium)) -> dict[str, Any]:
+    await alerts.mark_read(db, userdata.owner_key(user))
+    return {"ok": True}

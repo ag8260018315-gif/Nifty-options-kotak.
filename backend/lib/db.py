@@ -44,6 +44,8 @@ INDEXES: dict[str, list[IndexModel]] = {
     "signal_outcomes": [IndexModel([("signal_id", ASCENDING)], name="signal_id", unique=True)],
     "export_manifests": [IndexModel([("trading_day", ASCENDING)], name="trading_day", unique=True)],
     # premium stock/SENSEX minute candles: read by (symbol, day) to restore a day, find the previous or last session and fill history gaps
+    "premium_alerts": [IndexModel([("owner", ASCENDING), ("created_at", DESCENDING)], name="owner_created"), IndexModel([("active", ASCENDING)], name="active")],
+    "premium_alert_events": [IndexModel([("owner", ASCENDING), ("at", DESCENDING)], name="owner_at")],
     "premium_candles": [IndexModel([("symbol", ASCENDING), ("trading_day", ASCENDING), ("time", ASCENDING)], name="symbol_day_time")],
 }
 
