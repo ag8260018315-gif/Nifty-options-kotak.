@@ -654,7 +654,7 @@ export default function Home({ isOwner = true }: { isOwner?: boolean }) {
             <div className="flex items-center gap-3">
               <div data-testid="brand-mark" className="flex size-9 items-center justify-center rounded-lg bg-[#e31837] shadow-[0_0_22px_rgba(227,24,55,0.28)]"><Activity className="size-5 text-white" /></div>
               <div>
-                <p data-testid="brand-name" className="font-heading text-sm font-semibold tracking-wide text-white">NIFTY OPTIONS DESK</p>
+                <p data-testid="brand-name" className="font-heading text-sm font-semibold tracking-wide text-white">EDGEDESK</p>
                 <p data-testid="brand-subtitle" className="text-[10px] uppercase tracking-[0.18em] text-slate-500">Kotak Neo · Read-only terminal</p>
               </div>
             </div>

@@ -71,7 +71,7 @@ export default function Premium({ user }: { user: PremiumUser }) {
           <div className="flex items-center gap-3">
             <div className="flex size-9 items-center justify-center rounded-lg bg-amber-300 text-[#1a1203]"><Activity className="size-5" /></div>
             <div>
-              <p className="font-heading text-sm font-semibold tracking-wide text-white">NIFTY OPTIONS DESK <span className="ml-1 rounded bg-amber-300 px-1.5 py-0.5 text-[10px] font-bold text-[#1a1203]">PREMIUM</span></p>
+              <p className="font-heading text-sm font-semibold tracking-wide text-white">EDGEDESK <span className="ml-1 rounded bg-amber-300 px-1.5 py-0.5 text-[10px] font-bold text-[#1a1203]">PREMIUM</span></p>
               <p className="text-[10px] uppercase tracking-[0.18em] text-slate-500">Live indices · SENSEX · stocks · Kotak Neo data</p>
             </div>
           </div>

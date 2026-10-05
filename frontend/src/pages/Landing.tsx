@@ -621,7 +621,7 @@ export default function Landing({ onSignedIn }: { onSignedIn: () => void }) {
         <nav aria-label="Main" className="mx-auto flex h-16 max-w-[1280px] items-center justify-between gap-4 px-5 sm:px-8">
           <a href="#top" className="flex items-center gap-2.5 rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/40">
             <span className="flex size-8 items-center justify-center rounded-lg bg-[#e0314b] text-white"><Activity className="size-[18px]" /></span>
-            <span className="font-heading text-[15px] font-semibold tracking-tight">NIFTY Options Desk</span>
+            <span className="font-heading text-[15px] font-semibold tracking-tight">EdgeDesk</span>
           </a>
           <div className="hidden items-center gap-7 text-[14px] text-[#9aa5b8] md:flex">
             <a href="#markets" className="hover:text-white">Markets</a>
@@ -788,7 +788,7 @@ export default function Landing({ onSignedIn }: { onSignedIn: () => void }) {
           <p className="max-w-[80ch]">
             For information only, not investment advice. Indicators are calculated by fixed formulas and can be misleading; check price, liquidity and risk before any trade. Greeks are model estimates. Uses the Kotak Neo API and is not affiliated with or endorsed by Kotak Securities.
           </p>
-          <p className="shrink-0">NIFTY Options Desk</p>
+          <p className="shrink-0">EdgeDesk</p>
         </div>
       </footer>
     </div>

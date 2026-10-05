@@ -89,7 +89,7 @@ def _signup_code_cap() -> int:
 
 
 def app_url() -> str:
-    return _env("APP_URL", "https://nifty-options-kotak.vercel.app")
+    return _env("APP_URL", "https://edgedesk.in")
 
 
 def _secret() -> str:
@@ -237,7 +237,7 @@ async def send_code(email: str) -> None:
     code = f"{secrets.randbelow(1_000_000):06d}"
     sent = await _send_mail(
         email,
-        f"{code} is your NIFTY Options Desk sign-in code",
+        f"{code} is your EdgeDesk sign-in code",
         f"Your sign-in code is {code}\n\nIt expires in 10 minutes and can be used once.\n"
         "If you did not try to sign in, you can ignore this email.\n",
     )
@@ -300,7 +300,7 @@ async def request_access(email: str, name: str | None, note: str | None) -> dict
     )
     logger.info("ACCESS_REQUESTED")
     body = (
-        f"{email} asked for access to NIFTY Options Desk.\n\n"
+        f"{email} asked for access to EdgeDesk.\n\n"
         f"Name: {clean_name or '(not given)'}\nNote: {clean_note or '(none)'}\n\n"
         f"Approve or decline it from the Access button at the bottom of the dashboard:\n{app_url()}\n"
     )
@@ -325,7 +325,7 @@ async def approve(email: str, owner: str | None) -> dict[str, Any]:
     _db_users[email] = "viewer"
     emailed = await _send_mail(
         email,
-        "You now have access to NIFTY Options Desk",
+        "You now have access to EdgeDesk",
         f"Your access request was approved.\n\nSign in at {app_url()} with this email address. "
         "You'll get a 6-digit code each time you sign in.\n",
     )

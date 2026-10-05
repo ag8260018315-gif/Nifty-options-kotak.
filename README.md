@@ -1,10 +1,10 @@
-# Nifty Options Desk (Kotak Neo)
+# EdgeDesk (Kotak Neo)
 
 A read-only options terminal for **NIFTY, BANKNIFTY and FINNIFTY**. It streams live index and option-chain data from the Kotak Neo Trade API, shows PCR / OI / Greeks, and produces CE/PE trade signals from a strategy whose parameters are tuned offline by a walk-forward research engine. It never places orders.
 
 - Frontend: Vite + React 19 + TypeScript + Tailwind v4 + shadcn/ui, deployed on **Vercel**
 - Backend: FastAPI + MongoDB (motor), deployed on **Render**
-- Live site: https://nifty-options-kotak.vercel.app
+- Live site: https://edgedesk.in
 
 ## How it fits together
 
