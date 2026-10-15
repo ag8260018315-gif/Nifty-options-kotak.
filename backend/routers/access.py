@@ -124,6 +124,44 @@ async def storage_usage(owner: dict[str, Any] = Depends(access.require_admin)) -
     return usage
 
 
+class StockLoad(BaseModel):
+    kind: str = Field(pattern="^(list|history)$")
+    years: float = Field(default=1.0, ge=0.1, le=2.0)
+
+
+@router.get("/admin/stocks")
+async def stocks_status(owner: dict[str, Any] = Depends(access.require_admin)) -> dict:
+    """Owner only: how many NSE stocks are searchable, how many have daily history, and what the loading job is doing."""
+    from jobs.stock_loader import loader
+    from lib.db import db
+    from premium import directory, history
+
+    listing = await directory.load(db)
+    return {**loader.snapshot(), "directory": {"total": len(listing), "loaded": listing.loaded, "updated_at": listing.updated_at},
+            "history_stocks": await db[history.COLLECTION].count_documents({"interval": "1d"})}
+
+
+@router.post("/admin/stocks/start")
+async def stocks_start(body: StockLoad, owner: dict[str, Any] = Depends(access.require_admin)) -> dict:
+    """Owner only: start loading every NSE stock (`list` = names only, no login; `history` = names plus daily candles, needs UPSTOX_ACCESS_TOKEN)."""
+    from jobs.stock_loader import LoaderError, loader
+    from lib.db import db
+
+    try:
+        loader.start(db, body.kind, body.years)
+    except LoaderError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return loader.snapshot()
+
+
+@router.post("/admin/stocks/stop")
+async def stocks_stop(owner: dict[str, Any] = Depends(access.require_admin)) -> dict:
+    from jobs.stock_loader import loader
+
+    loader.stop()
+    return loader.snapshot()
+
+
 class MoveData(BaseModel):
     old: str = Field(min_length=3, max_length=320)
     new: str = Field(min_length=3, max_length=320)

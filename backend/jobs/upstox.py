@@ -7,11 +7,13 @@ data.candles = [[timestamp, open, high, low, close, volume, oi], ...]; `--probe`
 can be checked before any bulk download.
 """
 import asyncio
+import codecs
 import gzip
 import json
 import urllib.parse
+import zlib
 from datetime import date, datetime, time, timedelta
-from typing import Any
+from typing import Any, Iterable, Iterator
 from zoneinfo import ZoneInfo
 
 import httpx
@@ -58,21 +60,71 @@ def symbol_keys(instruments: list[dict[str, Any]], wanted: list[str]) -> dict[st
     return found
 
 
-def directory_items(instruments: list[dict[str, Any]]) -> list[dict[str, str]]:
-    """{symbol, name, key} for every NSE cash-market equity share in Upstox's public instrument master. ETFs, bonds and other
-    instruments are left out: with an ISIN given, only company shares (ISIN starting INE) are kept."""
+def directory_item(row: dict[str, Any]) -> dict[str, str] | None:
+    """{symbol, name, key} when `row` is an NSE cash-market company share, else None. ETFs, bonds and other instruments are left out:
+    with an ISIN given, only company shares (ISIN starting INE) are kept."""
+    symbol = str(row.get("trading_symbol") or row.get("tradingsymbol") or "").strip().upper()
+    if not symbol or not row.get("instrument_key"):
+        return None
+    if str(row.get("segment", "NSE_EQ")) != "NSE_EQ" or str(row.get("instrument_type", "EQ")) not in {"EQ", ""}:
+        return None
+    isin = str(row.get("isin") or "")
+    if isin and not isin.startswith("INE"):
+        return None
+    return {"symbol": symbol, "name": str(row.get("name") or row.get("short_name") or symbol), "key": str(row["instrument_key"])}
+
+
+def directory_items(instruments: Iterable[dict[str, Any]]) -> list[dict[str, str]]:
+    """One entry per symbol for every company share in Upstox's public instrument master (the first row of a symbol wins)."""
     items: dict[str, dict[str, str]] = {}
     for row in instruments:
-        symbol = str(row.get("trading_symbol") or row.get("tradingsymbol") or "").strip().upper()
-        if not symbol or symbol in items or not row.get("instrument_key"):
-            continue
-        if str(row.get("segment", "NSE_EQ")) != "NSE_EQ" or str(row.get("instrument_type", "EQ")) not in {"EQ", ""}:
-            continue
-        isin = str(row.get("isin") or "")
-        if isin and not isin.startswith("INE"):
-            continue
-        items[symbol] = {"symbol": symbol, "name": str(row.get("name") or row.get("short_name") or symbol), "key": str(row["instrument_key"])}
+        item = directory_item(row)
+        if item and item["symbol"] not in items:
+            items[item["symbol"]] = item
     return list(items.values())
+
+
+def iter_json_array(chunks: Iterable[str]) -> Iterator[dict[str, Any]]:
+    """Objects of a top-level JSON array, one at a time, from text chunks of any size. Memory stays small however long the array is
+    (the NSE instrument file has ~100,000 rows and is far too big to load whole on a small server)."""
+    decoder, buffer = json.JSONDecoder(), ""
+    for chunk in chunks:
+        buffer += chunk
+        pos = 0
+        while True:
+            while pos < len(buffer) and buffer[pos] in " \r\n\t,[":
+                pos += 1
+            if pos >= len(buffer) or buffer[pos] == "]":
+                break
+            try:
+                row, end = decoder.raw_decode(buffer, pos)
+            except json.JSONDecodeError:
+                break  # the object is cut off at the end of this chunk; wait for more text
+            if isinstance(row, dict):
+                yield row
+            pos = end
+        buffer = buffer[pos:]
+
+
+def _text_chunks(raw: bytes, size: int = 1 << 16) -> Iterator[str]:
+    """Decoded text of a gzip (or plain) response, a slice at a time."""
+    decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
+    if raw[:2] == b"\x1f\x8b":
+        inflater = zlib.decompressobj(zlib.MAX_WBITS | 16)
+        for i in range(0, len(raw), size):
+            yield decoder.decode(inflater.decompress(raw[i:i + size]))
+        yield decoder.decode(inflater.flush(), final=True)
+    else:
+        for i in range(0, len(raw), size):
+            yield decoder.decode(raw[i:i + size])
+        yield decoder.decode(b"", final=True)
+
+
+async def stream_directory(client: httpx.AsyncClient, url: str = INSTRUMENTS_URL) -> list[dict[str, str]]:
+    """Every NSE company share from Upstox's public list, parsed in a stream so memory stays small."""
+    response = await client.get(url, timeout=90)
+    response.raise_for_status()
+    return directory_items(iter_json_array(_text_chunks(response.content)))
 
 
 def windows(start: date, end: date, days: int) -> list[tuple[date, date]]:
