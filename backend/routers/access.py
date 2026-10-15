@@ -145,10 +145,10 @@ async def stocks_status(owner: dict[str, Any] = Depends(access.require_admin)) -
 async def stocks_start(body: StockLoad, owner: dict[str, Any] = Depends(access.require_admin)) -> dict:
     """Owner only: start loading every NSE stock (`list` = names only, no login; `history` = names plus daily candles, needs UPSTOX_ACCESS_TOKEN)."""
     from jobs.stock_loader import LoaderError, loader
-    from lib.db import db
+    from lib.db import db, live_db, research_db
 
     try:
-        loader.start(db, body.kind, body.years)
+        loader.start(db, body.kind, body.years, {"app": db, "live": live_db, "research": research_db})
     except LoaderError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     return loader.snapshot()

@@ -248,3 +248,58 @@ def test_loader_reports_finish_stop_and_token_errors_in_plain_words(api, monkeyp
     assert done["phase"] == "done" and "5 stocks saved" in done["message"] and done["token_set"] is True
     rejected = run(go(FakeUpstox(reject="K0"), AsyncMongoMockClient()["two"]))
     assert rejected["phase"] == "error" and "expires every day" in rejected["message"] and "secret-token-value" not in json.dumps(rejected)
+
+
+# ------------------------------------------------------------------ the loader must never fill the free database
+def test_history_load_stops_by_itself_when_the_database_is_getting_full(monkeypatch):
+    from lib import storage
+
+    db = AsyncMongoMockClient()["g"]
+    items = [{"symbol": f"G{i}", "name": f"G{i}", "key": f"K{i}"} for i in range(60)]
+    fake = FakeUpstox()
+    monkeypatch.setattr(upstox, "fetch_range", fake)
+    used = {"mb": 300.0}
+
+    async def fake_measure(handles):
+        return {"limit_mb": 512.0, "used_mb": used["mb"], "percent": round(used["mb"] / 512 * 100), "status": "OK", "databases": {}}
+
+    monkeypatch.setattr(storage, "measure", fake_measure)
+    guard = stock_loader.space_guard({"app": db})
+
+    async def grow(progress):
+        used["mb"] = 300.0 + progress["done"] * 5          # each finished stock "uses" 5 MB in this test
+
+    async def go():
+        return await stock_loader.load_history(db, None, "t", items, pause=0, guard=guard, progress=grow)
+
+    out = run(go())
+    assert out["stopped"] is True and out["done"] < 60 and out["saved"] == out["done"]            # it stopped part-way, not after all 60
+    assert "so the database does not fill up" in out["reason"] and "Start again" in out["reason"]
+    used["mb"] = 400.0                                                                           # already over 75% before the first download
+    before = len(fake.calls)
+    again = run(stock_loader.load_history(db, None, "t", items, pause=0, guard=guard))
+    assert again["stopped"] is True and again["done"] == 0 and len(fake.calls) == before
+
+
+def test_button_job_reports_the_space_stop_in_plain_words(api, monkeypatch):
+    from lib import storage
+
+    async def fake_list(db, client):
+        return [{"symbol": f"S{i}", "name": "n", "key": f"K{i}"} for i in range(5)]
+
+    async def full(handles):
+        return {"limit_mb": 512.0, "used_mb": 450.0, "percent": 88, "status": "HIGH", "databases": {}}
+
+    monkeypatch.setattr(stock_loader, "load_list", fake_list)
+    monkeypatch.setattr(storage, "measure", full)
+    monkeypatch.setattr(upstox, "fetch_range", FakeUpstox())
+    monkeypatch.setenv("UPSTOX_ACCESS_TOKEN", "t")
+    loader = stock_loader.Loader()
+
+    async def go():
+        loader.start(AsyncMongoMockClient()["s"], "history", 1.0, {"app": api.db})
+        await loader.task
+        return loader.snapshot()
+
+    snap = run(go())
+    assert snap["phase"] == "stopped" and "450 MB of 512 MB used (88%)" in snap["message"] and "0 stocks saved" in snap["message"]

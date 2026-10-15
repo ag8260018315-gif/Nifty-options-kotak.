@@ -9,7 +9,8 @@
 The Stocks page then finds any stock by name or symbol and opens an END-OF-DAY chart for it (daily, weekly and monthly candles).
 These stocks are not on the live Kotak feed, so no live price is shown for them.
 
-Space: one stock takes roughly 14 KB per year of daily candles, so about 2,200 stocks for one year is around 30 MB of the free 512 MB database.
+Space: one stock takes about 17 KB per year of daily candles, so about 2,200 stocks for one year is around 36 MB of the free 512 MB database. The run
+stops by itself when the database is 75% full (LOADER_STOP_PERCENT).
 Needs UPSTOX_ACCESS_TOKEN (not for --list-only), MONGO_URL and DB_NAME in backend/.env; never paste them into chat or GitHub.
 Safe to re-run: a stock updated within the last --fresh-hours is skipped, so an interrupted run carries on where it stopped.
 """
@@ -32,7 +33,7 @@ async def main(args: argparse.Namespace) -> int:
     import httpx
 
     from jobs import stock_loader, upstox
-    from lib.db import db
+    from lib.db import db, live_db, research_db
 
     async with httpx.AsyncClient(timeout=60) as client:
         try:
@@ -68,9 +69,13 @@ async def main(args: argparse.Namespace) -> int:
 
         try:
             out = await stock_loader.load_history(db, client, token, items, years=args.years, chunk_days=args.chunk_days, fresh_hours=args.fresh_hours,
-                                                  limit=args.limit, force=args.refresh, progress=show)
+                                                  limit=args.limit, force=args.refresh, progress=show,
+                                                  guard=stock_loader.space_guard({"app": db, "live": live_db, "research": research_db}))
         except upstox.UpstoxError as exc:
             print(f"Stopped: {exc}\nThe token is missing or expired. Make a new one and run the same command again; finished stocks are skipped.")
+            return 1
+        if out["reason"]:
+            print(out["reason"])
             return 1
         print(f"finished: {out['saved']} stocks saved ({out['skipped']} already fresh)" + (f", {out['failed']} failed (run the same command again to retry them)" if out["failed"] else ""))
     return 0
@@ -80,7 +85,7 @@ if __name__ == "__main__":
     p = argparse.ArgumentParser()
     p.add_argument("--list-only", action="store_true", help="save the searchable list only; no candles, no Upstox login")
     p.add_argument("--probe", action="store_true", help="check the token on one stock; save nothing")
-    p.add_argument("--years", type=float, default=1.0, help="years of daily candles (default 1; each extra year adds about 30 MB for all stocks)")
+    p.add_argument("--years", type=float, default=1.0, help="years of daily candles (default 1; each year adds about 36 MB for all stocks)")
     p.add_argument("--limit", type=int, default=0, help="only the first N stocks that still need data")
     p.add_argument("--refresh", action="store_true", help="download again even stocks updated within --fresh-hours")
     p.add_argument("--fresh-hours", type=float, default=20.0, help="skip stocks updated within this many hours")
