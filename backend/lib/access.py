@@ -238,6 +238,12 @@ async def send_code(email: str) -> None:
     if len(recent) >= MAX_SENDS_PER_HOUR:
         raise HTTPException(status_code=429, detail="Too many codes requested. Try again in an hour.")
     code = f"{secrets.randbelow(1_000_000):06d}"
+    # Save first, then email: if the database refuses the write (a full free-plan cluster) nobody receives a code that can't work.
+    await codes.replace_one(
+        {"_id": email},
+        {"_id": email, "code_hash": _code_hash(email, code), "expires_at": now + CODE_TTL_SECONDS, "attempts": 0, "sends": recent + [now]},
+        upsert=True,
+    )
     sent = await _send_mail(
         email,
         f"{code} is your EdgeDesk sign-in code",
@@ -245,14 +251,13 @@ async def send_code(email: str) -> None:
         "If you did not try to sign in, you can ignore this email.\n",
     )
     if not sent:
+        try:  # nothing was delivered: put the old record back so an immediate retry isn't treated as a resend
+            await (codes.replace_one({"_id": email}, existing, upsert=True) if existing else codes.delete_one({"_id": email}))
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("ACCESS_CODE_ROLLBACK_ERROR kind=%s", type(exc).__name__)
         raise HTTPException(status_code=502, detail="The code email couldn't be sent. Try again shortly.")
     if role is None:
         _signup_codes.append(now)
-    await codes.replace_one(
-        {"_id": email},
-        {"_id": email, "code_hash": _code_hash(email, code), "expires_at": now + CODE_TTL_SECONDS, "attempts": 0, "sends": recent + [now]},
-        upsert=True,
-    )
     logger.info("ACCESS_CODE_SENT")
 
 

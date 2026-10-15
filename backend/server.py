@@ -1,7 +1,9 @@
 import asyncio
 from contextlib import asynccontextmanager
 from contextlib import suppress
-from fastapi import Depends, FastAPI, APIRouter
+from fastapi import Depends, FastAPI, APIRouter, Request
+from fastapi.responses import JSONResponse
+from pymongo.errors import PyMongoError
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
 import os
@@ -15,6 +17,7 @@ load_dotenv(ROOT_DIR / '.env')
 # MongoDB connection
 from lib.db import client, db, ensure_indexes, live_db, research_db
 from lib.feed_worker import feed_worker
+from lib import storage
 from lib.access import require_user
 from lib.settings import settings
 from jobs.research_scheduler import run_forever as research_job
@@ -32,7 +35,7 @@ async def lifespan(app: FastAPI):
     app.state.feed_task = asyncio.create_task(feed_worker.run())
     app.state.signal_task = asyncio.create_task(live_signals.runner.run()) if settings.mode == "LIVE" else None
     app.state.trade_task = asyncio.create_task(trading.trader.run()) if settings.mode == "LIVE" and trading.trader and trading.settings.mode != "OFF" else None
-    app.state.research_task = asyncio.create_task(research_job(live_db, research_db))
+    app.state.research_task = asyncio.create_task(research_job(live_db, research_db, db))
     app.state.alert_task = asyncio.create_task(alerts.run_forever(lambda: db, premium_market.public_quote, premium_routes._quick_analysis_summary, premium_routes.alerts_is_live, access_lib._send_mail))
     yield
     for task in (app.state.alert_task, app.state.research_task, app.state.trade_task, app.state.signal_task, app.state.feed_task):
@@ -49,6 +52,13 @@ async def lifespan(app: FastAPI):
 
 # Create the main app without a prefix
 app = FastAPI(lifespan=lifespan)
+
+@app.exception_handler(PyMongoError)
+async def database_error(request: Request, exc: PyMongoError) -> JSONResponse:
+    """A database failure (a full free-plan cluster most of all) answers in plain words instead of a bare 500."""
+    logger.error("DATABASE_ERROR path=%s kind=%s full=%s", request.url.path, type(exc).__name__, storage.is_storage_full(exc))
+    return JSONResponse(status_code=503, content={"detail": storage.explain_db_error(exc)})
+
 
 # Create a router with the /api prefix
 api_router = APIRouter(prefix="/api")

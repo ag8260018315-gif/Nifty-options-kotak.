@@ -3,6 +3,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 
 import MoveData from "@/components/MoveData";
 import PendingPayments from "@/components/billing/PendingPayments";
+import StorageMeter from "@/components/StorageMeter";
 import { ApiError, apiGet, apiPost } from "@/lib/api";
 
 export interface PendingRequest {
@@ -168,6 +169,7 @@ export default function AccessAdmin({ onClose }: { onClose: () => void }) {
           </section>
 
           <PendingPayments />
+          <StorageMeter />
           <MoveData />
           <section aria-labelledby="premium-title" data-testid="premium-admin">
             <h3 id="premium-title" className="text-sm font-semibold text-white">Premium access</h3>

@@ -9,6 +9,7 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from jobs.bridge import ingest_symbol
+from lib import storage
 from research import data, store
 from research.optimize import optimize
 from shared.config import EngineConfig, load_config, save_config
@@ -27,15 +28,40 @@ def _int(name: str, default: int) -> int:
         return default
 
 
+async def _delete_snapshots_before(live_db: Any, cutoff_day: str) -> int:
+    result = await live_db.market_snapshot_history.delete_many({"trading_day": {"$lt": cutoff_day}})
+    return int(result.deleted_count)
+
+
 async def trim_snapshots(live_db: Any, today: str, keep_days: int | None = None) -> int:
-    """Delete 5-second option-chain snapshots older than SNAPSHOT_KEEP_DAYS calendar days (default 4; 0 turns it off). They are by far
-    the biggest user of database space on a small plan; only the recent days are needed (daily export, nightly copy into research)."""
-    keep = _int("SNAPSHOT_KEEP_DAYS", 4) if keep_days is None else keep_days
+    """Delete 5-second option-chain snapshots older than SNAPSHOT_KEEP_DAYS calendar days (default 1 = today and yesterday;
+    0 turns it off). One trading day is about 60 MB, so on a 512 MB plan only the most recent days can be kept; the daily
+    copy into research needs just the day before."""
+    keep = _int("SNAPSHOT_KEEP_DAYS", 1) if keep_days is None else keep_days
     if keep <= 0:
         return 0
-    cutoff = (datetime.fromisoformat(today) - timedelta(days=keep)).date().isoformat()
-    result = await live_db.market_snapshot_history.delete_many({"trading_day": {"$lt": cutoff}})
-    return int(result.deleted_count)
+    return await _delete_snapshots_before(live_db, (datetime.fromisoformat(today) - timedelta(days=keep)).date().isoformat())
+
+
+async def housekeeping(live_db: Any, research_db: Any, app_db: Any = None, now: datetime | None = None) -> dict[str, Any]:
+    """Runs every few minutes, independent of the nightly research job (which can stop early): trims old snapshots, then, if
+    the database is close to the plan limit, keeps only today's snapshots so a full database never blocks sign-in."""
+    day = (now or datetime.now(IST)).astimezone(IST).date().isoformat()
+    out: dict[str, Any] = {}
+    try:
+        out["snapshots_trimmed"] = await trim_snapshots(live_db, day)
+    except Exception as exc:  # noqa: BLE001
+        out["snapshots_trimmed"] = f"error {type(exc).__name__}"
+    usage = await storage.measure({"app": app_db if app_db is not None else live_db, "live": live_db, "research": research_db})
+    if usage is not None:
+        out["storage"] = usage
+        if usage["status"] != "OK":
+            try:
+                out["emergency_trimmed"] = await _delete_snapshots_before(live_db, day)
+            except Exception as exc:  # noqa: BLE001
+                out["emergency_trimmed"] = f"error {type(exc).__name__}"
+            logger.warning("STORAGE_%s used_mb=%s limit_mb=%s percent=%s trimmed=%s", usage["status"], usage["used_mb"], usage["limit_mb"], usage["percent"], out["emergency_trimmed"])
+    return out
 
 
 async def run_daily(live_db: Any, research_db: Any, now: datetime | None = None) -> dict[str, Any]:
@@ -59,17 +85,19 @@ async def run_daily(live_db: Any, research_db: Any, now: datetime | None = None)
                 save_config(EngineConfig.model_validate(report["config"]))
                 entry["config_written"] = True
         summary["symbols"][symbol] = entry
-    try:
-        summary["snapshots_trimmed"] = await trim_snapshots(live_db, day)
-    except Exception as exc:  # noqa: BLE001  housekeeping must never stop the research
-        summary["snapshots_trimmed"] = f"error {type(exc).__name__}"
     await research_db.job_state.update_one({"_id": "daily"}, {"$set": {"last_run_day": day, "summary": summary}}, upsert=True)
     logger.info("RESEARCH_DAILY %s", summary)
     return summary
 
 
-async def run_forever(live_db: Any, research_db: Any) -> None:
+async def run_forever(live_db: Any, research_db: Any, app_db: Any = None) -> None:
     while True:
+        try:
+            await housekeeping(live_db, research_db, app_db)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("HOUSEKEEPING_ERROR kind=%s", type(exc).__name__)
         try:
             await run_daily(live_db, research_db)
         except asyncio.CancelledError:

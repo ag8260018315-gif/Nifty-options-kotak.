@@ -112,6 +112,18 @@ async def revoke_premium(body: EmailBody, owner: dict[str, Any] = Depends(access
     return await premium.revoke(body.email)
 
 
+@router.get("/admin/storage")
+async def storage_usage(owner: dict[str, Any] = Depends(access.require_admin)) -> dict:
+    """Owner only: how full the free database plan is (data size of every database against the plan limit)."""
+    from lib import storage
+    from lib.db import db, live_db, research_db
+
+    usage = await storage.measure({"app": db, "live": live_db, "research": research_db})
+    if usage is None:
+        raise HTTPException(status_code=502, detail="The database size couldn't be read right now.")
+    return usage
+
+
 class MoveData(BaseModel):
     old: str = Field(min_length=3, max_length=320)
     new: str = Field(min_length=3, max_length=320)
