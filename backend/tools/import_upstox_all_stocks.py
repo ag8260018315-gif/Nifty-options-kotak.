@@ -17,7 +17,7 @@ import argparse
 import asyncio
 import os
 import sys
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, timedelta
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -27,80 +27,52 @@ from dotenv import load_dotenv  # noqa: E402
 
 load_dotenv(ROOT / ".env")
 
-KB_PER_STOCK_YEAR = 14
-
-
-async def fresh_symbols(db, hours: float) -> set[str]:
-    """Symbols whose stored daily history was written in the last `hours` hours (one small query, no candle data transferred)."""
-    cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
-    done: set[str] = set()
-    async for doc in db["index_history"].find({"interval": "1d"}, {"symbol": 1, "updated_at": 1}):
-        try:
-            if datetime.fromisoformat(doc["updated_at"]) >= cutoff:
-                done.add(doc["symbol"])
-        except (KeyError, ValueError):
-            continue
-    return done
-
 
 async def main(args: argparse.Namespace) -> int:
     import httpx
 
-    from jobs import upstox
+    from jobs import stock_loader, upstox
     from lib.db import db
-    from premium import directory, history
 
-    async with httpx.AsyncClient() as client:
-        items = upstox.directory_items(await upstox.load_instruments(client))
-        print(f"Upstox lists {len(items)} NSE stocks.")
-        if len(items) < 500:
-            print("FAIL: far fewer stocks than expected; the instrument file may have changed. Nothing was saved.")
+    async with httpx.AsyncClient(timeout=60) as client:
+        try:
+            if args.probe:
+                items = upstox.directory_items(upstox.iter_json_array(upstox._text_chunks((await client.get(upstox.INSTRUMENTS_URL, timeout=90)).content)))
+                print(f"Upstox lists {len(items)} NSE stocks.")
+            else:
+                items = await stock_loader.load_list(db, client)
+                print(f"Upstox lists {len(items)} NSE stocks. Search list saved: {len(items)} stocks.")
+        except stock_loader.LoaderError as exc:
+            print(f"FAIL: {exc}")
             return 1
-        if not args.probe:
-            saved = await directory.save(db, items, source="upstox")
-            print(f"search list saved: {saved} stocks")
         if args.list_only:
             return 0
 
-        token = os.environ.get("UPSTOX_ACCESS_TOKEN", "").strip()
+        token = os.environ.get(stock_loader.TOKEN_ENV, "").strip()
         if not token:
             print("FAIL: set UPSTOX_ACCESS_TOKEN in backend/.env first (it expires every day; make a new one when Upstox says 401).")
             return 1
-        end = date.today() - timedelta(days=1)
-        start = end - timedelta(days=int(365 * args.years))
         if args.probe:
-            first = items[0]
-            raw = await upstox.fetch_range(client, token, first["key"], end - timedelta(days=10), end, "day")
+            end = date.today() - timedelta(days=1)
+            raw = await upstox.fetch_range(client, token, items[0]["key"], end - timedelta(days=10), end, "day")
             rows = (raw.get("data") or {}).get("candles") or []
             bars = upstox.parse_candles(raw, session_only=False)
-            print(f"{first['symbol']}: status={raw.get('status')} candles={len(rows)} usable={len(bars)} first row: {rows[0] if rows else None}")
+            print(f"{items[0]['symbol']}: status={raw.get('status')} candles={len(rows)} usable={len(bars)} first row: {rows[0] if rows else None}")
             return 0 if bars else 1
 
-        skip = set() if args.refresh else await fresh_symbols(db, args.fresh_hours)
-        todo = [i for i in items if i["symbol"] not in skip]
-        if args.limit:
-            todo = todo[: args.limit]
-        print(f"{len(todo)} stocks to download ({len(items) - len(todo)} already fresh). About {len(todo) * KB_PER_STOCK_YEAR * max(args.years, 0.1) / 1024:.0f} MB of space.")
-        saved_total = failed = 0
-        for n, item in enumerate(todo, start=1):
-            bars: list[dict] = []
-            try:
-                for a, b in upstox.windows(start, end, args.chunk_days):
-                    bars.extend(upstox.parse_candles(await upstox.fetch_range(client, token, item["key"], a, b, "day"), session_only=False))
-                    await asyncio.sleep(0.35)  # stay well inside Upstox's rate limit
-            except upstox.UpstoxError as exc:
-                print(f"{item['symbol']}: {exc}")
-                if "401" in str(exc):
-                    print("Stopped: the token is missing or expired. Make a new one and run the same command again; finished stocks are skipped.")
-                    return 1
-                failed += 1
-                continue
-            if bars:
-                await history.merge_save(db, item["symbol"], "1d", bars)
-                saved_total += 1
-            if n % 50 == 0 or n == len(todo):
-                print(f"{n}/{len(todo)} done ({saved_total} saved, {failed} failed)")
-        print(f"finished: {saved_total} stocks saved" + (f", {failed} failed (run the same command again to retry them)" if failed else ""))
+        print(f"About {len(items) * stock_loader.KB_PER_STOCK_YEAR * max(args.years, 0.1) / 1024:.0f} MB of space if every stock is downloaded.")
+
+        def show(p: dict) -> None:
+            if p["done"] % 50 == 0 or p["done"] == p["total"]:
+                print(f"{p['done']}/{p['total']} done ({p['saved']} saved, {p['failed']} failed)")
+
+        try:
+            out = await stock_loader.load_history(db, client, token, items, years=args.years, chunk_days=args.chunk_days, fresh_hours=args.fresh_hours,
+                                                  limit=args.limit, force=args.refresh, progress=show)
+        except upstox.UpstoxError as exc:
+            print(f"Stopped: {exc}\nThe token is missing or expired. Make a new one and run the same command again; finished stocks are skipped.")
+            return 1
+        print(f"finished: {out['saved']} stocks saved ({out['skipped']} already fresh)" + (f", {out['failed']} failed (run the same command again to retry them)" if out["failed"] else ""))
     return 0
 
 
