@@ -165,3 +165,7 @@ Google reported a "Soft 404" for the landing page: the first HTML was an empty `
 ## robots.txt must let crawlers render the landing page (2026-10-07)
 
 Search Console reported `Googlebot blocked by robots.txt` for XHR `/api/access/me`. The landing page calls it (401 when signed out) and `/api/public/*` to draw itself, so `robots.txt` keeps `/api/` blocked but explicitly allows `/api/access/me` and `/api/public/`. Without it Google rendered the "can't reach the server" screen.
+
+## Main web address is www.edgedesk.in (2026-10-15)
+
+In Vercel (project Domains) `edgedesk.in` redirects with a 308 to `www.edgedesk.in`, which is connected to Production. So the canonical link, Open Graph URLs, `sitemap.xml` and the `Sitemap:` line in `robots.txt` all name `https://www.edgedesk.in/`; naming the apex while it redirects sent Google conflicting signals. If the redirect direction is ever flipped in Vercel, change these four places together. The backend `APP_URL` default (apex) is left alone: emailed links still work through the redirect, and a backend change would restart the Kotak feed.
