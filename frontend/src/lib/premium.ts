@@ -18,6 +18,22 @@ export const INTERVAL_OPTIONS: { value: Interval; label: string }[] = [
   { value: 43200, label: "1M" },
 ];
 
+export const DAILY_OPTIONS = INTERVAL_OPTIONS.filter((o) => o.value >= 1440); // the only timeframes an end-of-day stock has
+export interface DirectoryItem {
+  symbol: string;
+  name: string;
+  live: boolean;
+  sector: string | null;
+}
+export interface DirectoryResponse {
+  label: string;
+  total: number;
+  loaded: boolean; // false until the owner has loaded the full NSE list; search then covers only the live stocks
+  updated_at: string | null;
+  live_count: number;
+  items: DirectoryItem[];
+}
+
 export function intervalName(minutes: number): string {
   return ({ 1: "1-minute", 5: "5-minute", 15: "15-minute", 30: "30-minute", 60: "1-hour", 240: "4-hour", 1440: "daily", 10080: "weekly", 43200: "monthly" } as Record<number, string>)[minutes] ?? `${minutes}-minute`;
 }
@@ -46,12 +62,14 @@ export interface Quote {
   volume: number | null;
   vwap?: number | null;
   updated_at: string;
+  end_of_day?: boolean; // the last stored daily candle, not a live price
 }
 
 export interface MarketInfo {
-  state: "OPEN" | "DELAYED" | "CLOSED" | "NO_FEED";
+  state: "OPEN" | "DELAYED" | "CLOSED" | "NO_FEED" | "END_OF_DAY"; // END_OF_DAY: a stock that is not on the live feed
   message: string;
   tick_age_seconds: number | null;
+  as_of?: string | null; // END_OF_DAY: the date of the last stored daily candle
 }
 
 export interface Candle {
@@ -208,7 +226,8 @@ export interface Detail {
   label: string;
   symbol: string;
   name: string;
-  sector?: string;
+  sector?: string | null;
+  live?: boolean; // false: not on the live feed, end-of-day data only
   quote: Quote | null;
   market: MarketInfo;
   analysis: Analysis;
@@ -489,7 +508,7 @@ export function validEma(fast: number, slow: number): string | null {
 
 // Poll quickly while prices can change; slowly when the market is closed.
 export function pollMs(state: MarketInfo["state"] | undefined): number {
-  return state === "CLOSED" || state === "NO_FEED" ? 30_000 : 2_500;
+  return state === "END_OF_DAY" ? 120_000 : state === "CLOSED" || state === "NO_FEED" ? 30_000 : 2_500;
 }
 
 export type AlertKind = "price_above" | "price_below" | "change_pct_above" | "change_pct_below" | "volume_spike" | "bias_bullish" | "bias_bearish";

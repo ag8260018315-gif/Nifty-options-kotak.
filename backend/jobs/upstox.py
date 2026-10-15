@@ -58,6 +58,23 @@ def symbol_keys(instruments: list[dict[str, Any]], wanted: list[str]) -> dict[st
     return found
 
 
+def directory_items(instruments: list[dict[str, Any]]) -> list[dict[str, str]]:
+    """{symbol, name, key} for every NSE cash-market equity share in Upstox's public instrument master. ETFs, bonds and other
+    instruments are left out: with an ISIN given, only company shares (ISIN starting INE) are kept."""
+    items: dict[str, dict[str, str]] = {}
+    for row in instruments:
+        symbol = str(row.get("trading_symbol") or row.get("tradingsymbol") or "").strip().upper()
+        if not symbol or symbol in items or not row.get("instrument_key"):
+            continue
+        if str(row.get("segment", "NSE_EQ")) != "NSE_EQ" or str(row.get("instrument_type", "EQ")) not in {"EQ", ""}:
+            continue
+        isin = str(row.get("isin") or "")
+        if isin and not isin.startswith("INE"):
+            continue
+        items[symbol] = {"symbol": symbol, "name": str(row.get("name") or row.get("short_name") or symbol), "key": str(row["instrument_key"])}
+    return list(items.values())
+
+
 def windows(start: date, end: date, days: int) -> list[tuple[date, date]]:
     """[start, end] split into consecutive chunks of at most `days` days (inclusive)."""
     out, cursor = [], start

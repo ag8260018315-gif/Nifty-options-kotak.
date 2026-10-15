@@ -47,8 +47,8 @@ def data_status(market: dict[str, Any] | None) -> dict[str, Any]:
     state = (market or {}).get("state", "NO_FEED")
     msg = (market or {}).get("message", "")
     age = (market or {}).get("tick_age_seconds")
-    status = {"OPEN": "LIVE", "CLOSED": "HISTORICAL", "DELAYED": "DELAYED"}.get(state, "UNAVAILABLE")
-    text = {"LIVE": "Live prices, fresh ticks.", "HISTORICAL": "Market closed: based on the last completed session, not live prices.",
+    status = {"OPEN": "LIVE", "CLOSED": "HISTORICAL", "END_OF_DAY": "HISTORICAL", "DELAYED": "DELAYED"}.get(state, "UNAVAILABLE")
+    text = {"LIVE": "Live prices, fresh ticks.", "HISTORICAL": msg if state == "END_OF_DAY" and msg else "Market closed: based on the last completed session, not live prices.",
             "DELAYED": msg or "Prices are delayed, so no signal is produced.", "UNAVAILABLE": msg or "No live price feed."}[status]
     return {"status": status, "tick_age_seconds": age, "message": text}
 

@@ -46,7 +46,7 @@ function pathFor(values: Nums | undefined, start: number, end: number, x: (i: nu
   return d;
 }
 
-export default function PriceChart({ analysis, options, engine }: { analysis: Analysis; options: ChartOptions; engine?: EngineSignal | null }) {
+export default function PriceChart({ analysis, options, engine, emptyText }: { analysis: Analysis; options: ChartOptions; engine?: EngineSignal | null; emptyText?: string }) {
   const candles = analysis.candles;
   const series = analysis.series;
   const n = candles.length;
@@ -123,7 +123,7 @@ export default function PriceChart({ analysis, options, engine }: { analysis: An
   }, [candles, series, start, end, options.bb, setup]);
 
   if (n === 0) {
-    return <div ref={setWrap} data-testid="chart-empty" className="flex h-64 items-center justify-center rounded-lg border border-dashed border-[#202b42] px-4 text-center text-xs text-slate-500">No live candles yet. They appear once live ticks arrive during market hours (09:15–15:30 IST).</div>;
+    return <div ref={setWrap} data-testid="chart-empty" className="flex h-64 items-center justify-center rounded-lg border border-dashed border-[#202b42] px-4 text-center text-xs text-slate-500">{emptyText ?? "No live candles yet. They appear once live ticks arrive during market hours (09:15–15:30 IST)."}</div>;
   }
 
   const span = domain.hi - domain.lo || 1;
