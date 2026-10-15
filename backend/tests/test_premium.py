@@ -36,6 +36,9 @@ def api(monkeypatch):
     monkeypatch.setattr(premium_market, "_quotes_restored", False)
     premium_market.quotes.clear()
     premium_market._last_session_cache.clear()
+    for state in (premium_market.candles, premium_market._day, premium_market._last_cum, premium_market._dirty, premium_market._prev_cache):
+        state.clear()  # candles recorded by one test must never leak into the next (they made later tests order-dependent)
+    premium_market._loaded.clear()
     monkeypatch.setattr(rpm, "research_db", AsyncMongoMockClient()["research"])
     monkeypatch.setattr(rpm, "db", db)
     rpm._history_cache.clear()
