@@ -8,7 +8,6 @@ import AiAnalyst from "@/components/AiAnalyst";
 import EngineOverview from "@/components/EngineOverview";
 import { LiveSignalPanel, ResearchPanel } from "@/components/EnginePanels";
 import FeatureGuide from "@/components/FeatureGuide";
-import TradingPanel from "@/components/TradingPanel";
 import OrderBlockPanel from "@/components/OrderBlockPanel";
 import PreTradeChecks from "@/components/PreTradeChecks";
 import { detectMarkers } from "@/lib/orderblocks";
@@ -734,8 +733,6 @@ export default function Home({ isOwner = true }: { isOwner?: boolean }) {
         <EngineOverview />
 
         <LiveSignalPanel symbol={symbol} />
-
-        <TradingPanel isOwner={isOwner} />
 
         <div id="chart" className="scroll-mt-4">
           <IndexChartCard symbol={symbol} />
