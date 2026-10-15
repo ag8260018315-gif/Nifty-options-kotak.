@@ -94,10 +94,11 @@ interface Props {
   hasEngine: boolean;
   ema?: [number, number]; // with onEma: custom EMA periods and saved layouts are offered
   onEma?: (value: [number, number]) => void;
+  intervals?: { value: Interval; label: string }[]; // default: every timeframe
 }
 
 // Timeframes, indicator toggles, customizable EMA periods and saved layouts for a chart.
-export default function ChartToolbar({ interval, onInterval, options, onOptions, hasVolume, hasEngine, ema, onEma }: Props) {
+export default function ChartToolbar({ interval, onInterval, options, onOptions, hasVolume, hasEngine, ema, onEma, intervals = INTERVAL_OPTIONS }: Props) {
   const periods = ema ?? DEFAULT_EMA;
   const [fastPeriod, slowPeriod] = periods;
   const [draft, setDraft] = useState<{ fast: string; slow: string }>({ fast: String(fastPeriod), slow: String(slowPeriod) });
@@ -130,7 +131,7 @@ export default function ChartToolbar({ interval, onInterval, options, onOptions,
     <div className="mb-3 space-y-2">
       <div className="flex flex-wrap items-center gap-2">
         <div className="flex max-w-full items-center gap-1 overflow-x-auto" role="group" aria-label="Candle size">
-          {INTERVAL_OPTIONS.map((option) => (
+          {intervals.map((option) => (
             <button key={option.value} type="button" data-testid={`interval-${option.value}`} aria-pressed={interval === option.value} onClick={() => onInterval(option.value)} className={`h-7 shrink-0 rounded-md px-2.5 text-[11px] font-semibold ${interval === option.value ? "bg-[#1f2a41] text-white" : "text-slate-400 hover:text-slate-200"}`}>{option.label}</button>
           ))}
         </div>

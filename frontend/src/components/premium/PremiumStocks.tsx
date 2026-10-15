@@ -5,6 +5,7 @@ import { Link, useNavigate } from "react-router-dom";
 import { MarketBadge } from "@/components/premium/AnalysisPanels";
 import Flash from "@/components/premium/Flash";
 import PremiumBreakouts from "@/components/premium/PremiumBreakouts";
+import StockFinder from "@/components/premium/StockFinder";
 import { BiasPill } from "@/components/premium/StockPanels";
 import { apiGet } from "@/lib/api";
 import { biasFromAction, pollMs, price, signed, tone, whole, type Bias, type MarketInfo, type StockRow } from "@/lib/premium";
@@ -91,6 +92,7 @@ export default function PremiumStocks() {
 
   return (
     <div data-testid="premium-stocks" className="space-y-4">
+      <StockFinder />
       <PremiumBreakouts />
 
       <section className="rounded-xl border border-[#202b42] bg-[#0c0f17]/95">

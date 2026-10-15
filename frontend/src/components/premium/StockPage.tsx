@@ -9,7 +9,7 @@ import StockNews from "@/components/premium/StockNews";
 import AlertMenu from "@/components/premium/AlertMenu";
 import WatchlistMenu from "@/components/premium/WatchlistMenu";
 import { ApiError, apiGet } from "@/lib/api";
-import { DEFAULT_EMA, INTERVAL_OPTIONS, pollMs, price, signed, tickAge, tone, validEma, whole, type Detail, type Interval } from "@/lib/premium";
+import { DAILY_OPTIONS, DEFAULT_EMA, INTERVAL_OPTIONS, pollMs, price, signed, tickAge, tone, validEma, whole, type Detail, type Interval } from "@/lib/premium";
 import { keepPreviousData, useSessionState } from "@/lib/premiumData";
 
 function StockHeader({ detail }: { detail: Detail }) {
@@ -26,14 +26,16 @@ function StockHeader({ detail }: { detail: Detail }) {
           </div>
           <div className="mt-2 flex flex-wrap items-center gap-2">
             <MarketBadge market={market} />
-            <span data-testid="stock-age" className="text-[11px] text-slate-500">Last price {tickAge(market.tick_age_seconds)}</span>
+            <span data-testid="stock-age" className="text-[11px] text-slate-500">{detail.live === false ? (market.as_of ? `Daily candles up to ${market.as_of}` : "No stored candles") : `Last price ${tickAge(market.tick_age_seconds)}`}</span>
           </div>
         </div>
-        <div className="flex items-center gap-2">
-          <AlertMenu symbol={detail.symbol} price={detail.quote?.ltp ?? null} />
-          <WatchlistMenu symbol={detail.symbol} />
-          <Link to={`/premium/compare?symbols=${encodeURIComponent(detail.symbol)}`} data-testid="stock-compare" className="inline-flex h-8 items-center rounded-md border border-[#26334b] px-3 text-xs text-slate-300 hover:bg-[#1a2336] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400/50">Compare</Link>
-        </div>
+        {detail.live !== false && (
+          <div className="flex items-center gap-2">
+            <AlertMenu symbol={detail.symbol} price={detail.quote?.ltp ?? null} />
+            <WatchlistMenu symbol={detail.symbol} />
+            <Link to={`/premium/compare?symbols=${encodeURIComponent(detail.symbol)}`} data-testid="stock-compare" className="inline-flex h-8 items-center rounded-md border border-[#26334b] px-3 text-xs text-slate-300 hover:bg-[#1a2336] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400/50">Compare</Link>
+          </div>
+        )}
       </div>
 
       <div className="mt-4 flex flex-wrap items-end justify-between gap-4">
@@ -76,6 +78,8 @@ export default function StockPage({ symbol }: { symbol: string }) {
   });
   const data = detail.data && detail.data.symbol === symbol ? detail.data : null; // ...but never show another stock's data
   const unknown = detail.error instanceof ApiError && detail.error.status === 404;
+  const endOfDay = data?.live === false; // not on the live feed: daily candles only
+  const shownInterval: Interval = endOfDay && interval < 1440 ? 1440 : interval;
 
   return (
     <div data-testid="stock-page" className="space-y-4">
@@ -83,7 +87,7 @@ export default function StockPage({ symbol }: { symbol: string }) {
         <Link to="/premium/stocks" data-testid="back-to-stocks" className="rounded-md border border-[#26334b] px-3 py-1.5 text-slate-300 hover:bg-[#1a2336] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400/50">← All stocks</Link>
         <span className="font-mono text-slate-500">{symbol}</span>
       </nav>
-      {unknown && <p data-testid="stock-unknown" role="alert" className="rounded-lg border border-[#202b42] p-4 text-sm text-slate-400">“{symbol}” is not one of the supported stocks. Go back to the list and pick one.</p>}
+      {unknown && <p data-testid="stock-unknown" role="alert" className="rounded-lg border border-[#202b42] p-4 text-sm text-slate-400">“{symbol}” is not in the list of NSE stocks. Go back and search for it by company name or symbol.</p>}
       {detail.isError && !unknown && !data && (
         <div className="rounded-lg border border-[#202b42] p-4 text-sm text-slate-400">
           This stock is unavailable right now.
@@ -94,9 +98,11 @@ export default function StockPage({ symbol }: { symbol: string }) {
       {data && (
         <>
           <StockHeader detail={data} />
+          {endOfDay && <p data-testid="eod-banner" role="note" className="rounded-lg border border-sky-500/30 bg-sky-950/30 px-3 py-2 text-[11px] leading-relaxed text-sky-200">End-of-day view. {data.name} is not on the live feed, so there is no live price, alert or watchlist for it here. The charts and signals come from stored daily candles{data.market.as_of ? `, the latest being ${data.market.as_of}` : ""}.</p>}
           <AnalysisView
             detail={data}
-            interval={interval}
+            interval={shownInterval}
+            intervals={endOfDay ? DAILY_OPTIONS : undefined}
             onInterval={setIntervalValue}
             ema={ema}
             onEma={setEma}

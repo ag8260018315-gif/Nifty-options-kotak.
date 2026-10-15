@@ -18,11 +18,11 @@ import asyncio
 
 from premium import history as index_history
 from premium import userdata
-from premium import alerts, announcements, daily_summary, news, sectors as sector_view, sentiment
+from premium import alerts, announcements, daily_summary, directory as stock_directory, endofday, news, sectors as sector_view, sentiment
 from premium.analysis import MIN_BARS, analyse, resample_ohlcv
 from premium.signal_engine import stock_signal
 from premium.stockinfo import name_of, sector_of, sectors
-from premium.timeframes import DAY, LONG_FRAMES, build_long_bars, day_start, to_daily
+from premium.timeframes import DAY, LONG_FRAMES, MONTH, WEEK, build_long_bars, day_start, to_daily
 from research import stock_history
 from premium.breakout import breakout_setup
 from premium.market import IST, market_hours, market_state, premium_market
@@ -36,6 +36,7 @@ INTERVALS = (1, 5, 15, 30, 60, 240, 1440, 10080, 43200)  # minutes: 1m 5m 15m 30
 LONG_TAIL = 300  # candles returned for the long frames (indicators use the full history)
 _history_cache: dict[str, tuple[float, tuple[list, list]]] = {}
 HISTORY_TTL = 600.0
+HISTORY_MAX = 150  # stocks whose stored history is kept in memory at once
 LABEL = "PREMIUM"
 _prev_cache: dict[tuple[str, str], dict[str, float] | None] = {}
 _quick_cache: dict[str, tuple[float, dict[str, Any]]] = {}
@@ -197,6 +198,8 @@ async def _history(symbol: str) -> tuple[list[dict[str, Any]], list[dict[str, An
         fine, daily = [], []
     if fine or daily:  # an empty result is not cached, so a fresh import shows up at once
         _history_cache[symbol] = (time.monotonic(), (fine, daily))
+        while len(_history_cache) > HISTORY_MAX:  # thousands of stocks can be opened: keep memory bounded (oldest entry goes first)
+            _history_cache.pop(next(iter(_history_cache)))
     return fine, daily
 
 
@@ -349,17 +352,40 @@ async def opportunities(limit: int = Query(default=8, ge=1, le=20)) -> dict[str,
             "note": "Ranked by a transparent score of live trend, momentum, MACD, VWAP, volume and nearby support/resistance. It describes current conditions; it is not advice or a prediction."}
 
 
+@router.get("/directory")
+async def directory_search(q: str = Query(default="", max_length=40), limit: int = Query(default=20, ge=1, le=50)) -> dict[str, Any]:
+    """Search every known NSE stock by symbol or company name. `live` marks the ones on the live feed; the rest have end-of-day data only."""
+    listing = await stock_directory.load(db)
+    live = set(premium_market.symbols("stock"))
+    items = [{**hit, "live": hit["symbol"] in live, "sector": sector_of(hit["symbol"]) if hit["symbol"] in live else None} for hit in stock_directory.search(listing, q, limit)]
+    return {"label": LABEL, "total": len(listing), "loaded": listing.loaded, "updated_at": listing.updated_at, "live_count": len(live), "items": items}
+
+
+async def _end_of_day_detail(entry: dict[str, str], interval: int, ema: tuple[int, int]) -> dict[str, Any]:
+    """A stock in the directory but not on the live feed: daily, weekly and monthly charts from stored daily candles, labelled END_OF_DAY."""
+    symbol, minutes = entry["symbol"], interval if interval in (DAY, WEEK, MONTH) else DAY
+    analysis = await _analyse_long(symbol, minutes, ema=ema)
+    _, daily = await _history(symbol)
+    market = endofday.market(daily)
+    return {"label": LABEL, "symbol": symbol, "name": entry["name"], "sector": None, "live": False, "quote": endofday.quote(symbol, entry["name"], daily),
+            "market": market, "analysis": analysis, "engine": stock_signal(analysis, market, minutes), "performance": await _performance(symbol)}
+
+
 @router.get("/stock/{symbol}")
 async def stock_detail(symbol: str, interval: int = Query(default=1), ema_fast: int = Query(default=9, ge=2, le=100), ema_slow: int = Query(default=20, ge=3, le=300)) -> dict[str, Any]:
     symbol = symbol.upper()
-    if symbol not in premium_market.symbols("stock") or interval not in INTERVALS:
+    live = symbol in premium_market.symbols("stock")
+    entry = None if live else (await stock_directory.load(db)).get(symbol)
+    if (not live and entry is None) or interval not in INTERVALS:
         raise HTTPException(status_code=404, detail="Unknown stock or interval.")
     if ema_slow <= ema_fast:
         raise HTTPException(status_code=422, detail="The slow EMA must be longer than the fast EMA.")
+    if entry is not None:
+        return await _end_of_day_detail(entry, interval, (ema_fast, ema_slow))
     await premium_market.ensure_quotes()
     market = _market_for(symbol)
     analysis = await _analyse(symbol, interval, ema=(ema_fast, ema_slow))
-    return {"label": LABEL, "symbol": symbol, "name": name_of(symbol), "sector": sector_of(symbol), "quote": premium_market.public_quote(symbol),
+    return {"label": LABEL, "symbol": symbol, "name": name_of(symbol), "sector": sector_of(symbol), "live": True, "quote": premium_market.public_quote(symbol),
             "market": market, "analysis": analysis, "engine": stock_signal(analysis, market, interval), "performance": await _performance(symbol)}
 
 

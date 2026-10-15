@@ -8,11 +8,12 @@ export function MarketBadge({ market }: { market: MarketInfo }) {
     DELAYED: "border-amber-500/35 bg-amber-950/70 text-amber-300",
     CLOSED: "border-zinc-700/60 bg-zinc-900/90 text-zinc-300",
     NO_FEED: "border-rose-500/35 bg-rose-950/70 text-rose-300",
+    END_OF_DAY: "border-sky-500/35 bg-sky-950/70 text-sky-300",
   };
-  const label = market.state === "OPEN" ? "LIVE" : market.state === "NO_FEED" ? "NO LIVE FEED" : market.state === "CLOSED" ? "MARKET CLOSED" : "DELAYED";
+  const label = market.state === "OPEN" ? "LIVE" : market.state === "NO_FEED" ? "NO LIVE FEED" : market.state === "CLOSED" ? "MARKET CLOSED" : market.state === "END_OF_DAY" ? "END OF DAY" : "DELAYED";
   return (
     <span data-testid="market-badge" title={market.message} className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[10px] font-bold tracking-[0.12em] ${styles[market.state]}`}>
-      <span className={`size-1.5 rounded-full ${market.state === "OPEN" ? "animate-pulse bg-emerald-400" : market.state === "DELAYED" ? "bg-amber-400" : market.state === "NO_FEED" ? "bg-rose-400" : "bg-zinc-500"}`} />
+      <span className={`size-1.5 rounded-full ${market.state === "OPEN" ? "animate-pulse bg-emerald-400" : market.state === "DELAYED" ? "bg-amber-400" : market.state === "NO_FEED" ? "bg-rose-400" : market.state === "END_OF_DAY" ? "bg-sky-400" : "bg-zinc-500"}`} />
       {label}
     </span>
   );
