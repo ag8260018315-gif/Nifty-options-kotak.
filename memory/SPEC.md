@@ -161,3 +161,7 @@ With SENSEX + 129 stocks the websocket reader awaited `premium_market.flush()` i
 ## Search engines see real content (2026-10-05)
 
 Google reported a "Soft 404" for the landing page: the first HTML was an empty `#root` and the app waits for the backend (`/api/access/me`), which can be asleep on the free host. `frontend/index.html` now carries a static summary inside `#root` (replaced when the app starts), and the loading and unreachable screens show a short `AboutBlurb` (loading one after 1.5 s) so a slow backend never leaves a blank page.
+
+## robots.txt must let crawlers render the landing page (2026-10-07)
+
+Search Console reported `Googlebot blocked by robots.txt` for XHR `/api/access/me`. The landing page calls it (401 when signed out) and `/api/public/*` to draw itself, so `robots.txt` keeps `/api/` blocked but explicitly allows `/api/access/me` and `/api/public/`. Without it Google rendered the "can't reach the server" screen.

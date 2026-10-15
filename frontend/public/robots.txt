@@ -1,6 +1,9 @@
 User-agent: *
 Allow: /
 Disallow: /api/
+# The landing page asks these two public, read-only endpoints how to draw itself; crawlers must be able to fetch them to render it.
+Allow: /api/access/me
+Allow: /api/public/
 Disallow: /premium
 Disallow: /subscription
 Disallow: /exchange
