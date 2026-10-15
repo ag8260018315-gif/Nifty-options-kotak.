@@ -25,7 +25,7 @@ from lib.premium import require_premium
 from lib import access as access_lib
 from premium import alerts
 from premium.market import premium_market
-from routers import access, ai, billing as billing_routes, exchange as exchange_routes, auth, dashboard, live_signals, premium_market as premium_routes, public, research_api, trading
+from routers import access, ai, billing as billing_routes, exchange as exchange_routes, auth, dashboard, live_signals, premium_market as premium_routes, public, research_api
 
 
 # Startup runs before the yield, shutdown after it. Add your own setup/teardown here.
@@ -34,14 +34,13 @@ async def lifespan(app: FastAPI):
     app.state.index_task = asyncio.create_task(ensure_indexes())  # background: a big index build must not block boot
     app.state.feed_task = asyncio.create_task(feed_worker.run())
     app.state.signal_task = asyncio.create_task(live_signals.runner.run()) if settings.mode == "LIVE" else None
-    app.state.trade_task = asyncio.create_task(trading.trader.run()) if settings.mode == "LIVE" and trading.trader and trading.settings.mode != "OFF" else None
     app.state.research_task = asyncio.create_task(research_job(live_db, research_db, db))
     app.state.alert_task = asyncio.create_task(alerts.run_forever(lambda: db, premium_market.public_quote, premium_routes._quick_analysis_summary, premium_routes.alerts_is_live, access_lib._send_mail))
     yield
-    for task in (app.state.alert_task, app.state.research_task, app.state.trade_task, app.state.signal_task, app.state.feed_task):
+    for task in (app.state.alert_task, app.state.research_task, app.state.signal_task, app.state.feed_task):
         if task:
             task.cancel()
-    for task in (app.state.research_task, app.state.trade_task, app.state.signal_task):
+    for task in (app.state.research_task, app.state.signal_task):
         if task:
             with suppress(asyncio.CancelledError):
                 await task
@@ -79,7 +78,6 @@ api_router.include_router(dashboard.router, dependencies=signed_in)
 api_router.include_router(ai.router, dependencies=signed_in)
 api_router.include_router(live_signals.router, dependencies=signed_in)
 api_router.include_router(research_api.router, dependencies=signed_in)
-api_router.include_router(trading.router, dependencies=signed_in)
 api_router.include_router(billing_routes.router)  # plans and subscriptions: reachable after the trial ends so people can pay
 api_router.include_router(exchange_routes.router, dependencies=signed_in)  # Trader's Exchange: services notice board, no payments
 # Premium data: the server verifies an active premium entitlement on EVERY route (403 otherwise).
