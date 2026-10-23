@@ -101,7 +101,7 @@ const FAQ: { q: string; a: string }[] = [
   { q: "Are the Greeks exact?", a: "No. IV, delta, gamma, theta and vega are estimates from a Black-Scholes model using live option prices. Treat them as a guide, not as exchange figures." },
   { q: "What does the AI analyst do?", a: "Claude reads the same data shown on your dashboard and explains it in plain language. It separates what the data shows from its interpretation, and it can be wrong." },
   { q: "What happens after the free trial?", a: "Access pauses and the plans page opens. Standard is ₹189 a month. Premium costs ₹189 to upgrade with your first month of Premium free, then ₹399 a month. You see every amount and date, and agree to them, before you pay. You can cancel any time." },
-  { q: "What does Premium add?", a: "Live SENSEX, live prices and charts for 129 stocks, a page for each stock with 9 and 20 EMA and other indicators, buyer-versus-seller pressure, signals with their tested history, stock news and announcements, alerts, a sector heatmap and a daily recap." },
+  { q: "What does Premium add?", a: "Live SENSEX, search across all 2,300+ NSE stocks with end-of-day charts, live prices and charts for 129 leading stocks, a page for each stock with 9 and 20 EMA and other indicators, buyer-versus-seller pressure, signals with their tested history, stock news and announcements, alerts, a sector heatmap and a daily recap." },
   { q: "Does it place trades?", a: "No. The desk is read-only. It never places, changes or cancels orders." },
   { q: "Is this investment advice?", a: "No. It's an information tool. Indicators are calculated by fixed formulas and can be misleading, so check price, liquidity and risk yourself." },
 ];
@@ -661,7 +661,7 @@ export default function Landing({ onSignedIn }: { onSignedIn: () => void }) {
             </div>
             {plan.signups_open && (
               <p data-testid="hero-price-line" className="mt-5 text-[14px] text-[#8c98ae]">
-                <span className="font-semibold text-[#e6ebf4]">{plan.trial_days} days free.</span> Then {price}/{plan.period}, or Premium with live SENSEX and 129 stocks. No card needed to start.
+                <span className="font-semibold text-[#e6ebf4]">{plan.trial_days} days free.</span> Then {price}/{plan.period}, or Premium with live SENSEX, every NSE stock to search and 129 of them live. No card needed to start.
               </p>
             )}
           </div>

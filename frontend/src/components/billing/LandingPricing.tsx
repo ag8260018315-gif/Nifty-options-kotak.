@@ -17,7 +17,7 @@ export default function LandingPricing({ plan, onStart }: { plan: PublicPlan; on
     <section id="pricing" aria-labelledby="pricing-title" className="mx-auto max-w-[1280px] scroll-mt-20 px-5 pb-20 sm:px-8">
       <div className="mx-auto max-w-[720px] text-center">
         <h2 id="pricing-title" className="font-heading text-[clamp(2rem,4vw,3rem)] font-bold leading-tight tracking-tight">Start free. Upgrade when you want more.</h2>
-        <p className="mt-3 text-[15px] leading-relaxed text-[#8c98ae]">{plan.trial_days} days of the full Standard dashboard on us, no card needed. Then ₹{plan.price_inr} a month, or step up to Premium for live SENSEX, 129 stocks and the full analysis suite.</p>
+        <p className="mt-3 text-[15px] leading-relaxed text-[#8c98ae]">{plan.trial_days} days of the full Standard dashboard on us, no card needed. Then ₹{plan.price_inr} a month, or step up to Premium for live SENSEX, every NSE stock to search (129 of them live) and the full analysis suite.</p>
       </div>
       <div className="mt-10">
         <PlanCards

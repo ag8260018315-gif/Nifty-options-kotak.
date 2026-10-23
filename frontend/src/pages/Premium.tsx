@@ -19,8 +19,8 @@ export interface PremiumUser {
 type View = "indices" | "stocks" | "stock" | "compare" | "alerts" | "sectors";
 
 const FEATURES = [
-  { icon: Gauge, title: "Advanced live charts", text: "SENSEX, NIFTY 50, BANK NIFTY, FIN NIFTY and every stock, from 1-minute to monthly candles, with 9/20 EMA (or your own periods), Bollinger bands, VWAP, RSI, MACD, volume, support/resistance and candlestick patterns." },
-  { icon: Database, title: "129 stocks, a page each", text: "Search, filter by sector, sort, keep watchlists, compare up to four stocks side by side, and open any stock for its live price, status and news." },
+  { icon: Gauge, title: "Advanced live charts", text: "SENSEX, NIFTY 50, BANK NIFTY, FIN NIFTY and every live stock, from 1-minute to monthly candles (daily to monthly for the other NSE stocks), with 9/20 EMA (or your own periods), Bollinger bands, VWAP, RSI, MACD, volume, support/resistance and candlestick patterns." },
+  { icon: Database, title: "Every NSE stock, a page each", text: "Search all 2,300+ NSE stocks by name or symbol and open any of them for end-of-day charts and a signal. The 129 leading stocks are also live, with prices, sector filters, watchlists, comparison, alerts and news." },
   { icon: Target, title: "Signal engine with tested history", text: "Bullish, bearish or neutral with reasons, a buy/sell zone, entry, stop and targets, what would invalidate it, and how the same rule did on past data. Never a promise." },
   { icon: ShieldCheck, title: "Real Kotak data only", text: "Every number comes from the live Kotak Neo feed. Nothing is simulated, and the page says plainly when the market is closed or data is delayed." },
 ];
